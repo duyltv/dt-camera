@@ -1,0 +1,22 @@
+.env
+
+# Local runtime data
+data/*
+!data/.gitkeep
+!data/recordings/
+data/recordings/*
+!data/recordings/.gitkeep
+
+# Go
+bin/
+*.test
+.gocache/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/

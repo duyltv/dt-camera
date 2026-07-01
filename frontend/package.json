@@ -1,0 +1,28 @@
+{
+  "name": "dt-camera-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "hls.js": "^1.5.18",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.1",
+    "vite": "^7.1.7"
+  },
+  "devDependencies": {
+    "serve": "^14.2.4"
+  },
+  "optionalDependencies": {
+    "@esbuild/linux-arm64": "^0.28.1",
+    "@esbuild/linux-x64": "^0.28.1",
+    "@rollup/rollup-linux-arm64-gnu": "^4.62.2",
+    "@rollup/rollup-linux-arm64-musl": "^4.62.2",
+    "@rollup/rollup-linux-x64-gnu": "^4.62.2",
+    "@rollup/rollup-linux-x64-musl": "^4.62.2"
+  }
+}

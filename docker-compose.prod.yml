@@ -1,0 +1,75 @@
+# Production overlay for DT Camera.
+#
+# Usage:
+#   APP_ENV=production COOKIE_SECURE=true \
+#     BOOTSTRAP_ADMIN_EMAIL=admin@example.com \
+#     BOOTSTRAP_ADMIN_PASSWORD='StrongP@ssword-1234' \
+#     FRONTEND_ORIGIN=https://camera.example.com \
+#     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# This file does NOT redefine every service. It patches the base services with:
+#   - healthchecks for every long-running service
+#   - restart: unless-stopped
+#   - explicit APP_ENV=production so the backend refuses to start with
+#     insecure defaults (COOKIE_SECURE=false, weak passwords, etc.)
+#   - stricter bind addresses and dependency ordering
+#
+# Video files are intentionally NOT part of the backup set produced by the
+# scripts in ./scripts; that lives on the mounted RECORDINGS_HOST_PATH and is
+# the operator's responsibility to snapshot separately.
+
+services:
+  postgres:
+    restart: unless-stopped
+    # PostgreSQL 16 has its own readiness signal; pg_isready returns 0 only
+    # once the cluster accepts connections. We use it for both the initial
+    # wait (compose-level depends_on) and the recurring healthcheck.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  backend:
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  recorder:
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # The recorder container doesn't expose a port, so probe the database
+      # row the recorder is supposed to upsert. If `last_seen_at` is older
+      # than 90s, the recorder is unhealthy.
+      test:
+        - "CMD-SHELL"
+        - 'psql "$$DATABASE_URL" -tA -c "SELECT EXTRACT(EPOCH FROM (now() - MAX(last_seen_at))) < 90 FROM recorder_heartbeats WHERE worker_id=$$RECORDER_WORKER_ID;" | grep -q t'
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  frontend:
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5173/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

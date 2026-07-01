@@ -1,0 +1,118 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dt_camera}
+      POSTGRES_USER: ${POSTGRES_USER:-dt_camera}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      APP_ADDR: :8080
+      # APP_ENV: development|production|staging. Leave unset
+      # (=development) for local dev so the safety checks are
+      # advisory. Set to production in real deployments; the
+      # backend will refuse to start if COOKIE_SECURE is not
+      # true, passwords are weak, or FRONTEND_ORIGIN is wrong.
+      APP_ENV: ${APP_ENV:-}
+      DATABASE_URL: postgres://${POSTGRES_USER:-dt_camera}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-dt_camera}?sslmode=disable
+      RECORDINGS_PATH: ${RECORDINGS_CONTAINER_PATH:-/recordings}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:${APP_PORT:-8088}}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-168}
+      SESSION_CLEANUP_INTERVAL_SECONDS: ${SESSION_CLEANUP_INTERVAL_SECONDS:-15m}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      LOGIN_RATE_LIMIT_PER_KEY: ${LOGIN_RATE_LIMIT_PER_KEY:-10}
+      LOGIN_RATE_LIMIT_PER_IP: ${LOGIN_RATE_LIMIT_PER_IP:-50}
+      LOGIN_RATE_LIMIT_WINDOW: ${LOGIN_RATE_LIMIT_WINDOW:-1m}
+      LOGIN_RATE_LIMIT_BLOCK_FOR: ${LOGIN_RATE_LIMIT_BLOCK_FOR:-5m}
+      ALERT_EVAL_INTERVAL_SECONDS: ${ALERT_EVAL_INTERVAL_SECONDS:-1m}
+      EVENT_RETENTION_HOURS: ${EVENT_RETENTION_HOURS:-720h}
+      ALERT_RETENTION_HOURS: ${ALERT_RETENTION_HOURS:-2160h}
+      HEARTBEAT_RETENTION_HOURS: ${HEARTBEAT_RETENTION_HOURS:-168h}
+      REVOKED_SESSION_HOURS: ${REVOKED_SESSION_HOURS:-24h}
+      RETENTION_INTERVAL_SECONDS: ${RETENTION_INTERVAL_SECONDS:-6h}
+      HLS_ROOT: ${HLS_ROOT:-/tmp/dt-camera-hls}
+      HLS_INACTIVITY_SECONDS: ${HLS_INACTIVITY_SECONDS:-60}
+    volumes:
+      - ${RECORDINGS_HOST_PATH:-./data/recordings}:${RECORDINGS_CONTAINER_PATH:-/recordings}
+      - hls_data:${HLS_ROOT:-/tmp/dt-camera-hls}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Direct port exposure is OFF by default. nginx is the only public
+    # service. Uncomment to debug the backend in isolation; cookies set
+    # through nginx may not be visible here because of the different
+    # origin.
+    # ports:
+    #   - "${BACKEND_PORT:-8080}:8080"
+
+  recorder:
+    build:
+      context: ./recorder
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-dt_camera}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-dt_camera}?sslmode=disable
+      RECORDINGS_PATH: ${RECORDINGS_CONTAINER_PATH:-/recordings}
+      RECORDER_WORKER_ID: ${RECORDER_WORKER_ID:-recorder-1}
+      RECORDER_POLL_INTERVAL_SECONDS: ${RECORDER_POLL_INTERVAL_SECONDS:-5}
+      RECORDER_SEGMENT_SECONDS: ${RECORDER_SEGMENT_SECONDS:-60}
+      RECORDER_MAX_BACKOFF_SECONDS: ${RECORDER_MAX_BACKOFF_SECONDS:-60}
+      RECORDER_CLEANUP_INTERVAL_SECONDS: ${RECORDER_CLEANUP_INTERVAL_SECONDS:-60}
+      RECORDER_LOW_DISK_FREE_PERCENT: ${RECORDER_LOW_DISK_FREE_PERCENT:-10}
+      RECORDER_LOW_DISK_MIN_FILE_AGE_SECONDS: ${RECORDER_LOW_DISK_MIN_FILE_AGE_SECONDS:-3600}
+    volumes:
+      - ${RECORDINGS_HOST_PATH:-./data/recordings}:${RECORDINGS_CONTAINER_PATH:-/recordings}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # No exposed port — the recorder has no inbound HTTP.
+
+  frontend:
+    build:
+      context: ./frontend
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5173/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    # Direct port exposure is OFF by default. Hit it through nginx instead.
+    # ports:
+    #   - "${FRONTEND_PORT:-5173}:5173"
+
+  # Single-origin reverse proxy. This is the ONLY public port. Everything
+  # else (backend, frontend, postgres) is on the internal Docker network.
+  nginx:
+    build:
+      context: ./docker/nginx
+    ports:
+      - "${APP_PORT:-8088}:8088"
+    depends_on:
+      - backend
+      - frontend
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8088/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  hls_data:
