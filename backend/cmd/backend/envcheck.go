@@ -209,7 +209,7 @@ func checkSessionTTL() envCheckResult {
 			name:    "SESSION_TTL_HOURS",
 			ok:      false,
 			level:   "warning",
-			message: "SESSION_TTL_HOURS is unset; default of 168h (1 week) is too long for production; prefer 24h or less",
+			message: "SESSION_TTL_HOURS is unset; default of 2160h (90 days) will be used",
 		}
 	}
 	var hours int
@@ -221,12 +221,12 @@ func checkSessionTTL() envCheckResult {
 			message: fmt.Sprintf("SESSION_TTL_HOURS=%q is not a positive integer; using the configured default", v),
 		}
 	}
-	if hours > 168 {
+	if hours > 2160 {
 		return envCheckResult{
 			name:    "SESSION_TTL_HOURS",
 			ok:      false,
 			level:   "warning",
-			message: fmt.Sprintf("SESSION_TTL_HOURS=%d is unusually long; consider 24h or less", hours),
+			message: fmt.Sprintf("SESSION_TTL_HOURS=%d is longer than the 2160h session policy", hours),
 		}
 	}
 	return envCheckResult{name: "SESSION_TTL_HOURS", ok: true}

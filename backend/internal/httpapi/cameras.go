@@ -78,6 +78,15 @@ func (s *Server) handleCameraByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if action == "preview" {
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", nil)
+			return
+		}
+		s.previewCamera(w, r, id)
+		return
+	}
+
 	if action != "" {
 		writeError(w, http.StatusNotFound, "not_found", "camera endpoint not found", nil)
 		return
@@ -194,6 +203,46 @@ func (s *Server) getCamera(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	s.recordEvent(r, eventRecord{EventType: "camera.update", EntityType: "camera", EntityID: &camera.ID, Message: "camera updated"})
 	writeJSON(w, http.StatusOK, camera)
+}
+
+func (s *Server) previewCamera(w http.ResponseWriter, r *http.Request, id string) {
+	var rtspURL string
+	var enabled bool
+	err := s.db.QueryRowContext(r.Context(), `
+		SELECT rtsp_url, is_enabled
+		FROM cameras
+		WHERE id = $1
+	`, id).Scan(&rtspURL, &enabled)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			writeError(w, http.StatusNotFound, "not_found", "camera not found", nil)
+			return
+		}
+		writeDBError(w, err)
+		return
+	}
+	if !enabled {
+		if cached, ok := s.readCameraPreviewCache(id); ok {
+			w.Header().Set("X-Preview-Source", "cache")
+			writeJPEG(w, cached)
+			return
+		}
+		writeError(w, http.StatusBadRequest, "camera_disabled", "camera is disabled", nil)
+		return
+	}
+	image, err := captureRTSPPreview(r.Context(), rtspURL)
+	if err != nil {
+		if cached, ok := s.readCameraPreviewCache(id); ok {
+			w.Header().Set("X-Preview-Source", "cache")
+			writeJPEG(w, cached)
+			return
+		}
+		writeError(w, http.StatusBadRequest, "camera_preview_failed", "could not capture camera preview image", nil)
+		return
+	}
+	s.saveCameraPreviewCache(id, image)
+	w.Header().Set("X-Preview-Source", "live")
+	writeJPEG(w, image)
 }
 
 func (s *Server) updateCamera(w http.ResponseWriter, r *http.Request, id string) {

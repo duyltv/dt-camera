@@ -66,14 +66,14 @@ function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/" element={<Protected><Shell /></Protected>}>
-            <Route index element={<Dashboard />} />
+            <Route index element={<Navigate to="/live" replace />} />
             <Route path="storage" element={<AdminOnly><StoragePage /></AdminOnly>} />
             <Route path="cameras" element={<AdminOnly><CamerasPage /></AdminOnly>} />
             <Route path="users" element={<AdminOnly><UsersPage /></AdminOnly>} />
             <Route path="permissions" element={<AdminOnly><PermissionsPage /></AdminOnly>} />
             <Route path="health" element={<AdminOnly><HealthDashboardPage /></AdminOnly>} />
             <Route path="alerts" element={<AdminOnly><AlertsPage /></AdminOnly>} />
-            <Route path="layouts" element={<LayoutsPage />} />
+            <Route path="layouts" element={<AdminOnly><LayoutsPage /></AdminOnly>} />
             <Route path="live" element={<LiveLayoutPage />} />
             <Route path="playback" element={<PlaybackPage />} />
           </Route>
@@ -115,13 +115,13 @@ function Shell() {
         </nav>
         <nav className="nav-group">
           <span className="nav-label">Workspace</span>
-          <NavLink to="/layouts">Layouts</NavLink>
           <NavLink to="/live">Live</NavLink>
           <NavLink to="/playback">Playback</NavLink>
         </nav>
         {user.role === 'admin' && (
           <nav className="nav-group nav-group-admin">
             <span className="nav-label">Admin <AdminBadge /></span>
+            <NavLink to="/layouts">Layouts</NavLink>
             <NavLink to="/storage">Storage</NavLink>
             <NavLink to="/cameras">Cameras</NavLink>
             <NavLink to="/users">Users</NavLink>
@@ -354,21 +354,113 @@ function StoragePage() {
     run();
   }
 
+  const summary = storageSummary(items);
+
   return (
     <Panel title="Storage Locations">
-      <FormGrid onSubmit={create}>
-        <input placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-        <input placeholder="/recordings" value={form.container_path} onChange={(e) => setForm({ ...form, container_path: e.target.value })} />
-        <label className="check"><input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} /> Enabled</label>
-        <button>Create</button>
-      </FormGrid>
+      <section className="storage-hero">
+        <div>
+          <h3>Recording storage health</h3>
+          <p>Monitor mounted recording folders, disk usage, writeability, and validation errors before they interrupt recording.</p>
+        </div>
+        <button type="button" onClick={run} disabled={loading}>{loading ? 'Refreshing...' : 'Refresh health'}</button>
+      </section>
+
+      <div className="storage-summary-grid">
+        <StorageMetric label="Locations" value={items.length} detail={`${summary.enabled} enabled`} />
+        <StorageMetric label="Total capacity" value={formatBytes(summary.total)} detail={`${formatBytes(summary.used)} used`} />
+        <StorageMetric label="Free space" value={formatBytes(summary.free)} detail={`${summary.usedPercent.toFixed(1)}% used overall`} />
+        <StorageMetric label="Attention" value={summary.problemCount} detail="warnings or errors" tone={summary.problemCount ? 'warning' : 'ok'} />
+      </div>
+
+      <section className="storage-create-panel">
+        <div className="section-heading">
+          <h3>Add storage location</h3>
+          <p>Use the container path mounted into backend and recorder, for example <code>/recordings</code>.</p>
+        </div>
+        <form className="storage-create-form" onSubmit={create}>
+          <Field label="Display name" help="Shown in camera setup and health dashboards.">
+            <input placeholder="Primary recordings" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          </Field>
+          <Field label="Container path" help="Backend validates that this folder exists and is writable inside the container.">
+            <input placeholder="/recordings" value={form.container_path} onChange={(e) => setForm({ ...form, container_path: e.target.value })} required />
+          </Field>
+          <label className="switch-row storage-enable-row">
+            <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
+            <span><strong>Enable immediately</strong><small>Allow cameras to use this location after validation passes.</small></span>
+          </label>
+          <div className="form-actions">
+            <button>Create storage</button>
+          </div>
+        </form>
+      </section>
       <State loading={loading} error={error} />
       {items.length ? (
-        <DataTable rows={items.map(formatStorageRow)} columns={['name', 'container_path', 'enabled', 'health_status', 'exists', 'writable', 'used_percent', 'free_bytes', 'latest_validation_error']} />
+        <div className="storage-card-grid">
+          {items.map((item) => <StorageLocationCard key={item.id} item={item} />)}
+        </div>
       ) : (
         !loading && <EmptyState title="No storage locations" body="Create a storage location to enable recording." />
       )}
     </Panel>
+  );
+}
+
+function StorageMetric({ label, value, detail, tone = '' }) {
+  return (
+    <div className={`storage-metric ${tone ? `storage-metric-${tone}` : ''}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </div>
+  );
+}
+
+function StorageLocationCard({ item }) {
+  const usedPercent = clampPercent(item.used_percent);
+  const status = storageStatus(item);
+  const used = Number(item.used_bytes || 0);
+  const free = Number(item.free_bytes || 0);
+  const total = Number(item.total_bytes || used + free || 0);
+  const path = item.container_path || 'No path configured';
+  return (
+    <section className={`storage-card storage-card-${status.kind}`}>
+      <div className="storage-card-header">
+        <div>
+          <h3>{item.name}</h3>
+          <p>{path}</p>
+        </div>
+        <StatusBadge kind={status.badge} text={status.label} />
+      </div>
+      <div className="storage-usage-row">
+        <div className="storage-donut" style={{ '--used': `${usedPercent}%` }}>
+          <span>{usedPercent.toFixed(0)}%</span>
+        </div>
+        <div className="storage-usage-main">
+          <div className="storage-usage-label">
+            <strong>{formatBytes(used)} used</strong>
+            <span>{formatBytes(free)} free</span>
+          </div>
+          <div className="storage-usage-bar" aria-label={`${usedPercent.toFixed(1)} percent used`}>
+            <span style={{ width: `${usedPercent}%` }} />
+          </div>
+          <small>{total ? `${formatBytes(total)} total capacity` : 'Capacity unavailable'}</small>
+        </div>
+      </div>
+      <dl className="storage-health-grid">
+        <div><dt>Enabled</dt><dd>{item.is_enabled ? 'Yes' : 'No'}</dd></div>
+        <div><dt>Exists</dt><dd>{item.exists ? 'Yes' : 'No'}</dd></div>
+        <div><dt>Writable</dt><dd>{item.writable ? 'Yes' : 'No'}</dd></div>
+        <div><dt>Health</dt><dd>{item.health_status || 'unknown'}</dd></div>
+      </dl>
+      {item.latest_validation_error ? (
+        <p className="storage-error">{item.latest_validation_error}</p>
+      ) : !item.is_enabled ? (
+        <p className="storage-muted">Storage is disabled. Enable it before assigning cameras for recording.</p>
+      ) : (
+        <p className="storage-ok">Validated and ready for recorder access.</p>
+      )}
+    </section>
   );
 }
 
@@ -378,13 +470,30 @@ function CamerasPage() {
   const [form, setForm] = useState(newCameraForm());
   const [editingId, setEditingId] = useState('');
   const [editForm, setEditForm] = useState(null);
+  const [scanOpen, setScanOpen] = useState(false);
+  const [manualAddOpen, setManualAddOpen] = useState(false);
+  const [scanForm, setScanForm] = useState(newCameraScanForm());
+  const [scanResult, setScanResult] = useState(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState(null);
+  const [onvifForms, setOnvifForms] = useState({});
+  const [onvifBusy, setOnvifBusy] = useState({});
+  const [onvifMessages, setOnvifMessages] = useState({});
+  const [onvifPreviews, setOnvifPreviews] = useState({});
+  const [cameraPreviews, setCameraPreviews] = useState({});
+  const [cameraPreviewBusy, setCameraPreviewBusy] = useState({});
+  const [cameraPreviewErrors, setCameraPreviewErrors] = useState({});
+  const [cameraPreviewSources, setCameraPreviewSources] = useState({});
+  const [configuringDeviceKey, setConfiguringDeviceKey] = useState('');
   const [actionError, setActionError] = useState('');
   const { loading, error, run } = useLoader(load);
 
   async function load() {
     const [cameraData, storageData] = await Promise.all([api('/api/cameras'), api('/api/storage-locations')]);
-    setCameras(cameraData.cameras || []);
+    const nextCameras = cameraData.cameras || [];
+    setCameras(nextCameras);
     setStorage(storageData.storage_locations || []);
+    loadCameraPreviews(nextCameras);
   }
   useEffect(() => { run(); }, []);
 
@@ -455,21 +564,330 @@ function CamerasPage() {
     }
   }
 
+  function loadCameraPreviews(nextCameras) {
+    nextCameras.forEach((camera) => {
+      loadCameraPreview(camera);
+    });
+  }
+
+  async function loadCameraPreview(camera) {
+    setCameraPreviewBusy((prev) => ({ ...prev, [camera.id]: true }));
+    setCameraPreviewErrors((prev) => ({ ...prev, [camera.id]: '' }));
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/cameras/${camera.id}/preview`, {
+        method: 'GET',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error?.message || 'Unable to load preview.');
+      }
+      const blob = await response.blob();
+      const source = response.headers.get('X-Preview-Source') || 'live';
+      const imageUrl = URL.createObjectURL(blob);
+      setCameraPreviews((prev) => {
+        if (prev[camera.id]) URL.revokeObjectURL(prev[camera.id]);
+        return { ...prev, [camera.id]: imageUrl };
+      });
+      setCameraPreviewSources((prev) => ({ ...prev, [camera.id]: source }));
+    } catch (err) {
+      setCameraPreviewErrors((prev) => ({ ...prev, [camera.id]: err.message || 'Unable to load preview.' }));
+    } finally {
+      setCameraPreviewBusy((prev) => ({ ...prev, [camera.id]: false }));
+    }
+  }
+
+  async function scanCameras(event) {
+    event.preventDefault();
+    setActionError('');
+    setScanning(true);
+    setScanResult(null);
+    const ports = scanPortsFromForm(scanForm.ports);
+    const targetEstimate = estimateScanTargets(scanForm, ports);
+    const timeoutMS = Number(scanForm.timeout_ms) || 900;
+    const estimatedMS = Math.max(1800, Math.min(18000, targetEstimate.targets * Math.max(timeoutMS, 200) / 36));
+    const startedAt = Date.now();
+    setScanProgress({
+      percent: 3,
+      message: `Preparing ${targetEstimate.hosts || 'the'} host${targetEstimate.hosts === 1 ? '' : 's'} across ${ports.length || 1} ONVIF port${ports.length === 1 ? '' : 's'}...`,
+    });
+    const timer = window.setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      const percent = Math.min(94, Math.round((elapsed / estimatedMS) * 90) + 4);
+      setScanProgress({ percent, message: scanProgressMessage(percent, targetEstimate) });
+    }, 450);
+    try {
+      const payload = {
+        cidr: scanForm.mode === 'cidr' ? scanForm.cidr.trim() : '',
+        start_ip: scanForm.mode === 'range' ? scanForm.start_ip.trim() : '',
+        end_ip: scanForm.mode === 'range' ? scanForm.end_ip.trim() : '',
+        ports,
+        timeout_ms: timeoutMS,
+      };
+      const result = await api('/api/cameras/scan', { method: 'POST', body: JSON.stringify(payload) });
+      setScanProgress({ percent: 100, message: `Finished scan. Found ${result.summary?.found || 0} ONVIF candidate${result.summary?.found === 1 ? '' : 's'}.` });
+      setScanResult(result);
+    } catch (err) {
+      setActionError(err.message || 'Unable to scan for cameras.');
+      setScanProgress({ percent: 100, message: 'Scan stopped before completion.' });
+    } finally {
+      window.clearInterval(timer);
+      setScanning(false);
+    }
+  }
+
+  function deviceKey(device) {
+    return `${device.ip}:${device.port}`;
+  }
+
+  function onvifFormFor(device) {
+    return onvifForms[deviceKey(device)] || newONVIFImportForm(device);
+  }
+
+  function updateONVIFForm(device, patch) {
+    const key = deviceKey(device);
+    setOnvifForms((prev) => ({ ...prev, [key]: { ...onvifFormFor(device), ...patch } }));
+  }
+
+  function onvifPayload(device) {
+    const values = onvifFormFor(device);
+    return {
+      xaddr: device.xaddr,
+      name: values.name.trim(),
+      username: values.username.trim(),
+      password: values.password,
+      storage_location_id: values.storage_location_id || null,
+      retention_days: Number(values.retention_days),
+      max_storage_bytes: values.max_storage_bytes ? Number(values.max_storage_bytes) : null,
+      enabled: values.enabled,
+      recording_enabled: values.recording_enabled,
+    };
+  }
+
+  async function testONVIFDevice(device) {
+    const key = deviceKey(device);
+    setOnvifBusy((prev) => ({ ...prev, [key]: 'test' }));
+    setOnvifMessages((prev) => ({ ...prev, [key]: '' }));
+    try {
+      await api('/api/cameras/onvif/test', { method: 'POST', body: JSON.stringify(onvifPayload(device)) });
+      setOnvifMessages((prev) => ({ ...prev, [key]: 'Connection test passed. ONVIF returned an RTSP stream internally.' }));
+      loadONVIFPreview(device);
+    } catch (err) {
+      setOnvifMessages((prev) => ({ ...prev, [key]: err.message || 'Connection test failed.' }));
+    } finally {
+      setOnvifBusy((prev) => ({ ...prev, [key]: '' }));
+    }
+  }
+
+  async function loadONVIFPreview(device) {
+    const key = deviceKey(device);
+    setOnvifBusy((prev) => ({ ...prev, [key]: 'preview' }));
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/cameras/onvif/preview`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(onvifPayload(device)),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error?.message || 'Unable to capture preview.');
+      }
+      const blob = await response.blob();
+      const oldPreview = onvifPreviews[key];
+      const imageUrl = URL.createObjectURL(blob);
+      setOnvifPreviews((prev) => ({ ...prev, [key]: imageUrl }));
+      if (oldPreview) URL.revokeObjectURL(oldPreview);
+    } catch (err) {
+      setOnvifMessages((prev) => ({ ...prev, [key]: err.message || 'Unable to capture preview.' }));
+    } finally {
+      setOnvifBusy((prev) => ({ ...prev, [key]: '' }));
+    }
+  }
+
+  async function importONVIFDevice(device) {
+    const key = deviceKey(device);
+    setOnvifBusy((prev) => ({ ...prev, [key]: 'import' }));
+    setOnvifMessages((prev) => ({ ...prev, [key]: '' }));
+    try {
+      await api('/api/cameras/onvif/import', { method: 'POST', body: JSON.stringify(onvifPayload(device)) });
+      setOnvifMessages((prev) => ({ ...prev, [key]: 'Camera added.' }));
+      setScanResult((prev) => prev ? {
+        ...prev,
+        devices: (prev.devices || []).map((item) => (
+          deviceKey(item) === key ? { ...item, existing_camera_name: onvifFormFor(device).name.trim() } : item
+        )),
+      } : prev);
+      setConfiguringDeviceKey('');
+      run();
+    } catch (err) {
+      setOnvifMessages((prev) => ({ ...prev, [key]: err.message || 'Unable to add camera.' }));
+    } finally {
+      setOnvifBusy((prev) => ({ ...prev, [key]: '' }));
+    }
+  }
+
+  useEffect(() => {
+    if (!configuringDeviceKey) return undefined;
+    function closeOnEscape(event) {
+      if (event.key === 'Escape') setConfiguringDeviceKey('');
+    }
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [configuringDeviceKey]);
+
+  const configuringDevice = (scanResult?.devices || []).find((device) => deviceKey(device) === configuringDeviceKey);
+
   return (
     <Panel title="Cameras">
-      <section className="camera-admin-section">
+      <section className="camera-admin-section camera-scan-panel">
         <div className="section-heading">
-          <h3>Add Camera</h3>
-          <p>RTSP credentials are stored by the backend and never shown back in the browser.</p>
+          <h3>Discover ONVIF Cameras</h3>
+          <p>Scan a private IP range for ONVIF device services. Credentials and RTSP URLs are not guessed or exposed.</p>
         </div>
-        <CameraForm
-          form={form}
-          setForm={setForm}
-          storage={storage}
-          onSubmit={create}
-          submitText="Create camera"
-          rtspRequired
-        />
+        <button type="button" onClick={() => setScanOpen(!scanOpen)}>{scanOpen ? 'Hide scanner' : 'Scan for cameras'}</button>
+        {scanOpen && (
+          <>
+            <form className="camera-scan-form" onSubmit={scanCameras}>
+              <Field label="Scan mode">
+                <select value={scanForm.mode} onChange={(e) => setScanForm({ ...scanForm, mode: e.target.value })}>
+                  <option value="cidr">CIDR</option>
+                  <option value="range">IP range</option>
+                </select>
+              </Field>
+              {scanForm.mode === 'cidr' ? (
+                <Field label="CIDR range">
+                  <input value={scanForm.cidr} onChange={(e) => setScanForm({ ...scanForm, cidr: e.target.value })} placeholder="192.168.1.0/24" />
+                </Field>
+              ) : (
+                <>
+                  <Field label="Start IP">
+                    <input value={scanForm.start_ip} onChange={(e) => setScanForm({ ...scanForm, start_ip: e.target.value })} placeholder="192.168.1.1" />
+                  </Field>
+                  <Field label="End IP">
+                    <input value={scanForm.end_ip} onChange={(e) => setScanForm({ ...scanForm, end_ip: e.target.value })} placeholder="192.168.1.254" />
+                  </Field>
+                </>
+              )}
+              <Field label="ONVIF ports">
+                <input value={scanForm.ports} onChange={(e) => setScanForm({ ...scanForm, ports: e.target.value })} placeholder="80,8899" />
+              </Field>
+              <Field label="Timeout ms">
+                <input type="number" min="200" max="5000" value={scanForm.timeout_ms} onChange={(e) => setScanForm({ ...scanForm, timeout_ms: e.target.value })} />
+              </Field>
+              <div className="form-actions">
+                <button disabled={scanning}>{scanning ? 'Scanning...' : 'Start scan'}</button>
+              </div>
+            </form>
+            {scanProgress && (
+              <div className="scan-progress" role="status" aria-live="polite">
+                <div>
+                  <strong>{scanProgress.message}</strong>
+                  <span>{Math.round(scanProgress.percent)}%</span>
+                </div>
+                <div className="scan-progress-track">
+                  <span style={{ width: `${scanProgress.percent}%` }} />
+                </div>
+              </div>
+            )}
+            {scanResult && (
+              <div className="camera-scan-results">
+                <p className="muted">
+                  Scanned {scanResult.summary?.targets || 0} targets. Found {scanResult.summary?.found || 0} ONVIF candidate{scanResult.summary?.found === 1 ? '' : 's'}.
+                </p>
+                {(scanResult.devices || []).length ? (
+                  <div className="scan-device-grid">
+                    {scanResult.devices.map((device) => (
+                      <section className="scan-device-card" key={`${device.ip}:${device.port}`}>
+                        <div>
+                          <strong>{device.manufacturer || 'ONVIF camera'} {device.model || ''}</strong>
+                          <span>{device.ip}:{device.port}</span>
+                        </div>
+                        <div className="scan-device-badges">
+                          <StatusBadge kind={device.auth_required ? 'warning' : 'ok'} text={device.auth_required ? 'auth required' : device.status} />
+                          {device.existing_camera_name && <span className="scan-existing-badge">Already added: {device.existing_camera_name}</span>}
+                        </div>
+                        <dl>
+                          <div><dt>XAddr</dt><dd>{device.xaddr}</dd></div>
+                          {device.serial_number && <div><dt>Serial</dt><dd>{device.serial_number}</dd></div>}
+                          {device.firmware_version && <div><dt>Firmware</dt><dd>{device.firmware_version}</dd></div>}
+                        </dl>
+                        {!device.existing_camera_name && (
+                          <button type="button" onClick={() => setConfiguringDeviceKey(deviceKey(device))}>
+                            {configuringDeviceKey === deviceKey(device) ? 'Configuring...' : 'Configure'}
+                          </button>
+                        )}
+                        {device.existing_camera_name && <button type="button" disabled>Already in system</button>}
+                      </section>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState title="No ONVIF cameras found" body="Try a smaller range, confirm the camera is powered on, or include its ONVIF HTTP port." />
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </section>
+      {configuringDevice && (
+        <div className="onvif-modal-backdrop" role="presentation" onMouseDown={() => setConfiguringDeviceKey('')}>
+          <section
+            className="onvif-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="onvif-modal-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="onvif-modal-header">
+              <div>
+                <span>Discovered camera</span>
+                <h3 id="onvif-modal-title">{configuringDevice.manufacturer || 'ONVIF camera'} {configuringDevice.model || ''}</h3>
+                <p>{configuringDevice.ip}:{configuringDevice.port}</p>
+              </div>
+              <button type="button" className="ghost-button" onClick={() => setConfiguringDeviceKey('')}>Close</button>
+            </div>
+            <ONVIFImportForm
+              device={configuringDevice}
+              form={onvifFormFor(configuringDevice)}
+              storage={storage}
+              busy={onvifBusy[deviceKey(configuringDevice)]}
+              message={onvifMessages[deviceKey(configuringDevice)]}
+              previewUrl={onvifPreviews[deviceKey(configuringDevice)]}
+              onChange={(patch) => updateONVIFForm(configuringDevice, patch)}
+              onTest={() => testONVIFDevice(configuringDevice)}
+              onPreview={() => loadONVIFPreview(configuringDevice)}
+              onImport={() => importONVIFDevice(configuringDevice)}
+              onCancel={() => setConfiguringDeviceKey('')}
+            />
+          </section>
+        </div>
+      )}
+      <section className="camera-admin-section camera-manual-panel">
+        <button
+          type="button"
+          className="camera-manual-toggle"
+          aria-expanded={manualAddOpen}
+          onClick={() => setManualAddOpen((open) => !open)}
+        >
+          <span>
+            <strong>Add camera manually</strong>
+            <small>Use this when ONVIF discovery is not available or you already know the RTSP stream URL.</small>
+          </span>
+          <b>{manualAddOpen ? 'Hide form' : 'Open form'}</b>
+        </button>
+        {manualAddOpen && (
+          <div className="camera-manual-body">
+            <p>RTSP credentials are stored privately by the backend and are never returned to the browser.</p>
+            <CameraForm
+              form={form}
+              setForm={setForm}
+              storage={storage}
+              onSubmit={create}
+              submitText="Create camera"
+              rtspRequired
+            />
+          </div>
+        )}
       </section>
       <State loading={loading} error={error} />
       {actionError && <ErrorText message={actionError} />}
@@ -487,6 +905,25 @@ function CamerasPage() {
                   <div className="camera-statuses">
                     <StatusBadge kind={camera.enabled ? 'ok' : 'muted'} text={camera.enabled ? 'enabled' : 'disabled'} />
                     <StatusBadge kind={camera.recording_enabled ? 'ok' : 'warning'} text={camera.recording_enabled ? 'recording' : 'not recording'} />
+                  </div>
+                </div>
+                <div className="camera-preview-panel">
+                  {cameraPreviews[camera.id] ? (
+                    <img src={cameraPreviews[camera.id]} alt={`Preview from ${camera.name}`} />
+                  ) : (
+                    <div className="camera-preview-placeholder">
+                      <strong>{cameraPreviewBusy[camera.id] ? 'Loading preview...' : 'No preview yet'}</strong>
+                      <span>{camera.enabled ? (cameraPreviewErrors[camera.id] || 'Preview will appear when the camera responds.') : 'Camera is disabled.'}</span>
+                    </div>
+                  )}
+                  <div className="camera-preview-overlay">
+                    <span>
+                      {camera.name}
+                      {cameraPreviewSources[camera.id] === 'cache' && <em>Cached</em>}
+                    </span>
+                    <button type="button" disabled={cameraPreviewBusy[camera.id]} onClick={() => loadCameraPreview(camera)}>
+                      {cameraPreviewBusy[camera.id] ? 'Refreshing...' : 'Refresh preview'}
+                    </button>
                   </div>
                 </div>
                 {isEditing ? (
@@ -549,6 +986,119 @@ function newCameraForm() {
   };
 }
 
+function newCameraScanForm() {
+  return {
+    mode: 'cidr',
+    cidr: '192.168.1.0/24',
+    start_ip: '192.168.1.1',
+    end_ip: '192.168.1.254',
+    ports: '80,8899',
+    timeout_ms: 900,
+  };
+}
+
+function newONVIFImportForm(device) {
+  return {
+    name: [device.manufacturer, device.model].filter(Boolean).join(' ') || `Camera ${device.ip}`,
+    username: '',
+    password: '',
+    storage_location_id: '',
+    retention_days: 30,
+    max_storage_bytes: '',
+    enabled: true,
+    recording_enabled: false,
+  };
+}
+
+function ONVIFImportForm({ device, form, storage, busy, message, previewUrl, onChange, onTest, onPreview, onImport, onCancel }) {
+  return (
+    <div className="onvif-import-form">
+      <div className="onvif-preview">
+        {previewUrl ? (
+          <img src={previewUrl} alt={`Preview from ${device.ip}`} />
+        ) : (
+          <div><strong>Preview unavailable</strong><span>Run Test or Preview after entering authentication.</span></div>
+        )}
+      </div>
+      <Field label="Camera name">
+        <input value={form.name} onChange={(e) => onChange({ name: e.target.value })} />
+      </Field>
+      <Field label="Storage">
+        <select value={form.storage_location_id} onChange={(e) => onChange({ storage_location_id: e.target.value })}>
+          <option value="">No storage</option>
+          {storage.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+        </select>
+      </Field>
+      <Field label={device.auth_required ? 'ONVIF username' : 'ONVIF username optional'}>
+        <input value={form.username} onChange={(e) => onChange({ username: e.target.value })} autoComplete="off" />
+      </Field>
+      <Field label={device.auth_required ? 'ONVIF password' : 'ONVIF password optional'}>
+        <input type="password" value={form.password} onChange={(e) => onChange({ password: e.target.value })} autoComplete="new-password" />
+      </Field>
+      <Field label="Retention days">
+        <input type="number" min="1" value={form.retention_days} onChange={(e) => onChange({ retention_days: e.target.value })} />
+      </Field>
+      <Field label="Max storage bytes">
+        <input type="number" min="1" value={form.max_storage_bytes} onChange={(e) => onChange({ max_storage_bytes: e.target.value })} placeholder="Optional" />
+      </Field>
+      <div className="camera-switches">
+        <label className="switch-row"><input type="checkbox" checked={form.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} /> Camera enabled</label>
+        <label className="switch-row"><input type="checkbox" checked={form.recording_enabled} onChange={(e) => onChange({ recording_enabled: e.target.checked })} /> Record video</label>
+      </div>
+      <div className="form-actions">
+        <button type="button" disabled={Boolean(busy)} onClick={onTest}>{busy === 'test' ? 'Testing...' : 'Test'}</button>
+        <button type="button" disabled={Boolean(busy)} onClick={onPreview}>{busy === 'preview' ? 'Loading preview...' : 'Preview'}</button>
+        <button type="button" disabled={Boolean(busy) || !form.name.trim()} onClick={onImport}>{busy === 'import' ? 'Adding...' : 'Add camera'}</button>
+        <button type="button" disabled={Boolean(busy)} onClick={onCancel}>Cancel</button>
+      </div>
+      {message && <p className={message.includes('passed') || message.includes('added') ? 'success-text' : 'error'}>{message}</p>}
+    </div>
+  );
+}
+
+function scanPortsFromForm(value) {
+  const ports = String(value || '')
+    .split(',')
+    .map((item) => Number(item.trim()))
+    .filter((item) => Number.isFinite(item) && item > 0);
+  return ports.length ? ports : [80, 8899];
+}
+
+function estimateScanTargets(form, ports) {
+  const hosts = form.mode === 'range'
+    ? estimateIPRangeCount(form.start_ip, form.end_ip)
+    : estimateCIDRHostCount(form.cidr);
+  return { hosts, targets: Math.max(1, hosts || 1) * Math.max(1, ports.length || 1) };
+}
+
+function estimateCIDRHostCount(cidr) {
+  const parts = String(cidr || '').split('/');
+  const prefix = Number(parts[1]);
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) return 0;
+  return Math.min(512, 2 ** (32 - prefix));
+}
+
+function estimateIPRangeCount(start, end) {
+  const startValue = ipv4ToNumber(start);
+  const endValue = ipv4ToNumber(end);
+  if (startValue === null || endValue === null || endValue < startValue) return 0;
+  return Math.min(512, endValue - startValue + 1);
+}
+
+function ipv4ToNumber(value) {
+  const parts = String(value || '').trim().split('.').map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return null;
+  return (((parts[0] * 256 + parts[1]) * 256 + parts[2]) * 256 + parts[3]);
+}
+
+function scanProgressMessage(percent, estimate) {
+  if (percent < 18) return `Preparing ${estimate.targets || 'selected'} scan target${estimate.targets === 1 ? '' : 's'}...`;
+  if (percent < 48) return 'Probing ONVIF service ports...';
+  if (percent < 76) return 'Waiting for device service responses...';
+  if (percent < 94) return 'Checking ONVIF device information...';
+  return 'Finalizing discovered camera candidates...';
+}
+
 function cameraToForm(camera) {
   return {
     name: camera.name || '',
@@ -566,38 +1116,65 @@ function cameraToForm(camera) {
 function CameraForm({ form, setForm, storage, onSubmit, submitText, rtspRequired = false, secondaryAction }) {
   return (
     <form className="camera-form" onSubmit={onSubmit}>
-      <Field label="Camera name">
-        <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-      </Field>
-      <Field label={rtspRequired ? 'RTSP URL' : 'Replace RTSP URL'}>
-        <input
-          value={form.rtsp_url}
-          onChange={(e) => setForm({ ...form, rtsp_url: e.target.value })}
-          placeholder={rtspRequired ? 'rtsp://user:password@camera/stream' : 'Leave blank to keep current private URL'}
-          required={rtspRequired}
-        />
-      </Field>
-      <Field label="Storage location">
-        <select value={form.storage_location_id} onChange={(e) => setForm({ ...form, storage_location_id: e.target.value })}>
-          <option value="">No storage</option>
-          {storage.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-        </select>
-      </Field>
-      <Field label="Location">
-        <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Gate, lobby, office..." />
-      </Field>
-      <Field label="Group">
-        <input value={form.camera_group} onChange={(e) => setForm({ ...form, camera_group: e.target.value })} placeholder="Outdoor, warehouse..." />
-      </Field>
-      <Field label="Retention days">
-        <input type="number" min="1" value={form.retention_days} onChange={(e) => setForm({ ...form, retention_days: e.target.value })} />
-      </Field>
-      <Field label="Max storage bytes">
-        <input type="number" min="1" value={form.max_storage_bytes} onChange={(e) => setForm({ ...form, max_storage_bytes: e.target.value })} placeholder="Optional" />
-      </Field>
-      <div className="camera-switches">
-        <label className="switch-row"><input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} /> Camera enabled</label>
-        <label className="switch-row"><input type="checkbox" checked={form.recording_enabled} onChange={(e) => setForm({ ...form, recording_enabled: e.target.checked })} /> Record video</label>
+      <div className="camera-form-section camera-form-section-primary">
+        <div className="camera-form-section-heading">
+          <strong>Connection</strong>
+          <span>Give the channel a clear name and provide the private RTSP stream URL.</span>
+        </div>
+        <Field label="Camera name" help="Shown in Live, Playback, layouts, and alerts.">
+          <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Front gate" required />
+        </Field>
+        <Field label={rtspRequired ? 'RTSP stream URL' : 'Replace RTSP stream URL'} help={rtspRequired ? 'Example: rtsp://user:password@192.168.1.50:554/cam/realmonitor?channel=1&subtype=0' : 'Leave blank to keep the saved private stream URL.'}>
+          <input
+            value={form.rtsp_url}
+            onChange={(e) => setForm({ ...form, rtsp_url: e.target.value })}
+            placeholder={rtspRequired ? 'rtsp://user:password@camera-host:554/stream' : 'Leave blank to keep current private URL'}
+            required={rtspRequired}
+            spellCheck="false"
+          />
+        </Field>
+      </div>
+
+      <div className="camera-form-section">
+        <div className="camera-form-section-heading">
+          <strong>Recording</strong>
+          <span>Choose where clips are stored and how long this camera keeps footage.</span>
+        </div>
+        <Field label="Storage location" help={storage.length ? 'Recording can only start when a writable storage location is selected.' : 'Create a storage location before enabling recording.'}>
+          <select value={form.storage_location_id} onChange={(e) => setForm({ ...form, storage_location_id: e.target.value })}>
+            <option value="">No storage selected</option>
+            {storage.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Retention days" help="Old segments for this camera become eligible for cleanup after this many days.">
+          <input type="number" min="1" value={form.retention_days} onChange={(e) => setForm({ ...form, retention_days: e.target.value })} />
+        </Field>
+        <Field label="Max storage bytes" help="Optional per-camera cap. Leave blank for no camera-specific limit.">
+          <input type="number" min="1" value={form.max_storage_bytes} onChange={(e) => setForm({ ...form, max_storage_bytes: e.target.value })} placeholder="Optional" />
+        </Field>
+      </div>
+
+      <div className="camera-form-section">
+        <div className="camera-form-section-heading">
+          <strong>Organization</strong>
+          <span>Add simple labels and choose whether the camera is active immediately.</span>
+        </div>
+        <Field label="Location" help="Physical place or viewing angle.">
+          <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Gate, lobby, office..." />
+        </Field>
+        <Field label="Group" help="Useful for filtering larger camera systems.">
+          <input value={form.camera_group} onChange={(e) => setForm({ ...form, camera_group: e.target.value })} placeholder="Outdoor, warehouse..." />
+        </Field>
+        <div className="camera-switches">
+          <label className="switch-row">
+            <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
+            <span><strong>Camera enabled</strong><small>Allow live view, preview, and recorder discovery.</small></span>
+          </label>
+          <label className="switch-row">
+            <input type="checkbox" checked={form.recording_enabled} onChange={(e) => setForm({ ...form, recording_enabled: e.target.checked })} />
+            <span><strong>Record video</strong><small>Start recording when storage is selected and the recorder sees this channel.</small></span>
+          </label>
+        </div>
       </div>
       <div className="form-actions">
         <button>{submitText}</button>
@@ -685,136 +1262,138 @@ function PermissionsPage() {
 }
 
 function LayoutCanvas({ layout, cameras, onChange, onError }) {
-  // Visual drag-and-drop editor for a single layout. Renders a CSS grid
-  // sized to `layout.settings.columns` (default 4). Each tile is positioned
-  // via `gridColumn` / `gridRow` derived from its (x, y, width, height).
-  //
-  // Interactions:
-  //   - Click on empty grid cell -> open "add camera" picker for that cell.
-  //   - Drag tile body -> move tile (snap to grid on release).
-  //   - Drag one of 8 handles -> resize tile from that corner/edge.
-  //   - Click tile body without dragging -> select it; show Edit / Delete.
-  //
-  // All edits are saved via the `onChange` callback (which is wired to a
-  // PATCH/POST/DELETE in the parent). The canvas never blocks on the
-  // network: state is optimistic and the parent's `run()` re-fetches the
-  // canonical state after the save completes.
   const items = (layout.layout_items || []).slice().sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
   const cols = Math.max(1, Number(layout.settings?.columns) || 4);
-  const maxRow = items.reduce((m, it) => Math.max(m, (it.y || 0) + (it.height || 1)), 0);
+  const maxRow = items.reduce((m, item) => Math.max(m, Number(item.y || 0) + Number(item.height || 1)), 0);
   const rows = Math.max(3, maxRow + 2);
-  const [selectedId, setSelectedId] = React.useState(null);
-  const [pendingCell, setPendingCell] = React.useState(null); // {x,y}
-  const [drag, setDrag] = React.useState(null); // active drag/resize state
+  const [selectedId, setSelectedId] = useState(null);
+  const [pendingCell, setPendingCell] = useState(null);
+  const [drag, setDrag] = useState(null);
   const gridRef = React.useRef(null);
-  const cameraById = React.useMemo(() => {
-    const m = new Map();
-    (cameras || []).forEach((c) => m.set(c.id, c));
-    return m;
-  }, [cameras]);
+  const suppressNextGridClickRef = React.useRef(false);
+  const cameraById = new Map((cameras || []).map((camera) => [camera.id, camera]));
+
+  function itemID(item) {
+    return item.id || item.item_id;
+  }
 
   function gridRect() {
     const el = gridRef.current;
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    return { left: r.left, top: r.top, width: r.width, height: r.height, cols, rows };
+    return { left: r.left, top: r.top, width: r.width, height: r.height };
   }
-  function cellWidth() {
-    const r = gridRect();
-    return r ? r.width / r.cols : 0;
-  }
-  function cellHeight() {
-    const r = gridRect();
-    return r ? r.height / r.rows : 0;
-  }
+
   function pixelToCell(px, py) {
     const r = gridRect();
     if (!r) return { x: 0, y: 0 };
-    const cw = r.width / r.cols;
-    const ch = r.height / r.rows;
+    const cw = r.width / cols || 1;
+    const ch = r.height / rows || 1;
     let cx = Math.floor((px - r.left) / cw);
     let cy = Math.floor((py - r.top) / ch);
     cx = Math.max(0, Math.min(cols - 1, cx));
-    cy = Math.max(0, cy);
+    cy = Math.max(0, Math.min(rows - 1, cy));
     return { x: cx, y: cy };
   }
 
   function startDrag(item, mode, event) {
     event.preventDefault();
     event.stopPropagation();
-    setSelectedId(item.id);
+    suppressNextGridClickRef.current = false;
+    setSelectedId(itemID(item));
     setDrag({
-      itemId: item.id,
-      mode, // 'move' | 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
+      itemId: itemID(item),
+      mode,
       startMouseX: event.clientX,
       startMouseY: event.clientY,
-      startX: item.x,
-      startY: item.y,
-      startW: item.width,
-      startH: item.height,
+      startX: Number(item.x || 0),
+      startY: Number(item.y || 0),
+      startW: Math.max(1, Number(item.width || 1)),
+      startH: Math.max(1, Number(item.height || 1)),
+      moved: mode !== 'move',
+    });
+  }
+
+  function dragHasMoved(activeDrag, event) {
+    if (!activeDrag) return false;
+    if (activeDrag.moved) return true;
+    const dx = event.clientX - activeDrag.startMouseX;
+    const dy = event.clientY - activeDrag.startMouseY;
+    return Math.sqrt(dx * dx + dy * dy) > 4;
+  }
+
+  function updatedItemsForDrag(event) {
+    if (!drag) return items;
+    const rect = gridRect();
+    if (!rect) return items;
+    const cw = rect.width / cols || 1;
+    const ch = rect.height / rows || 1;
+    const dxc = Math.round((event.clientX - drag.startMouseX) / cw);
+    const dyc = Math.round((event.clientY - drag.startMouseY) / ch);
+    return items.map((item) => {
+      if (itemID(item) !== drag.itemId) return item;
+      let x = drag.startX;
+      let y = drag.startY;
+      let width = drag.startW;
+      let height = drag.startH;
+      if (drag.mode === 'move') {
+        x = Math.max(0, Math.min(cols - width, drag.startX + dxc));
+        y = Math.max(0, drag.startY + dyc);
+      } else {
+        if (drag.mode.includes('w')) {
+          x = Math.max(0, drag.startX + dxc);
+          width = Math.max(1, drag.startW - (x - drag.startX));
+        }
+        if (drag.mode.includes('e')) width = Math.max(1, drag.startW + dxc);
+        if (drag.mode.includes('n')) {
+          y = Math.max(0, drag.startY + dyc);
+          height = Math.max(1, drag.startH - (y - drag.startY));
+        }
+        if (drag.mode.includes('s')) height = Math.max(1, drag.startH + dyc);
+        if (x + width > cols) width = Math.max(1, cols - x);
+      }
+      return { ...item, x, y, width, height };
     });
   }
 
   function onGridMouseMove(event) {
     if (!drag) return;
-    const dx = event.clientX - drag.startMouseX;
-    const dy = event.clientY - drag.startMouseY;
-    const cw = cellWidth() || 1;
-    const ch = cellHeight() || 1;
-    const dxc = Math.round(dx / cw);
-    const dyc = Math.round(dy / ch);
-    const it = items.find((x) => x.id === drag.itemId);
-    if (!it) return;
-    let { x, y, width, height } = it;
-    const startX = drag.startX, startY = drag.startY, startW = drag.startW, startH = drag.startH;
-    if (drag.mode === 'move') {
-      x = Math.max(0, Math.min(cols - width, startX + dxc));
-      y = Math.max(0, startY + dyc);
-    } else {
-      // Resize: each handle moves one or two of {x, y, width, height}.
-      let nx = startX, ny = startY, nw = startW, nh = startH;
-      if (drag.mode.includes('w')) { nx = Math.max(0, startX + dxc); nw = Math.max(1, startW - (nx - startX)); }
-      if (drag.mode.includes('e')) { nw = Math.max(1, startW + dxc); }
-      if (drag.mode.includes('n')) { ny = Math.max(0, startY + dyc); nh = Math.max(1, startH - (ny - startY)); }
-      if (drag.mode.includes('s')) { nh = Math.max(1, startH + dyc); }
-      // Keep within grid bounds.
-      if (nx + nw > cols) nw = Math.max(1, cols - nx);
-      if (nw < 1) nw = 1;
-      if (nh < 1) nh = 1;
-      x = nx; y = ny; width = nw; height = nh;
+    if (!drag.moved && dragHasMoved(drag, event)) {
+      setDrag({ ...drag, moved: true });
     }
-    // Mutate the in-memory items copy; we save on mouseup.
-    const idx = items.findIndex((x) => x.id === drag.itemId);
-    if (idx >= 0 && (items[idx].x !== x || items[idx].y !== y || items[idx].width !== width || items[idx].height !== height)) {
-      items[idx] = { ...items[idx], x, y, width, height };
-    }
-    // Force re-render with the same array reference is hard; just trigger.
-    setDrag({ ...drag, _bump: (drag._bump || 0) + 1 });
+    onChange(updatedItemsForDrag(event), { refetch: false });
   }
 
-  function onGridMouseUp() {
+  function onGridMouseUp(event) {
     if (!drag) return;
-    const it = items.find((x) => x.id === drag.itemId);
+    const shouldSuppressClick = dragHasMoved(drag, event);
+    const updated = updatedItemsForDrag(event);
+    const changed = updated.find((item) => itemID(item) === drag.itemId);
+    if (shouldSuppressClick) suppressNextGridClickRef.current = true;
     setDrag(null);
-    if (!it) return;
-    onChange(items.map((x) => x.id === it.id ? { ...x, x: it.x, y: it.y, width: it.width, height: it.height } : x));
+    onChange(updated, { refetch: false });
+    if (changed) saveItem(changed);
   }
 
   async function saveItem(item) {
     try {
-      await api(`/api/layouts/${layout.id}/items/${item.id}`, { method: 'PATCH', body: JSON.stringify({
+      await api(`/api/layouts/${layout.id}/items/${itemID(item)}`, { method: 'PATCH', body: JSON.stringify({
         camera_id: item.camera_id,
         x: item.x, y: item.y, width: item.width, height: item.height,
         display_order: item.display_order, tile_type: item.tile_type,
       })});
+      onChange((layout.layout_items || []).map((x) => itemID(x) === itemID(item) ? item : x), { refetch: true });
     } catch (e) { onError(e.message); }
   }
+
   async function deleteItem(itemId) {
     try {
       await api(`/api/layouts/${layout.id}/items/${itemId}`, { method: 'DELETE' });
-      onChange(items.filter((x) => x.id !== itemId));
+      onChange(items.filter((x) => itemID(x) !== itemId), { refetch: true });
+      setSelectedId(null);
     } catch (e) { onError(e.message); }
   }
+
   async function addItemAt(x, y, cameraId) {
     if (!cameraId) return;
     try {
@@ -826,27 +1405,36 @@ function LayoutCanvas({ layout, cameras, onChange, onError }) {
         }),
       });
       const created = data?.layout_item || data?.item || data;
-      if (created && created.id) onChange([...items, created]);
+      if (created && created.id) onChange([...items, created], { refetch: true });
     } catch (e) { onError(e.message); }
   }
 
   function onGridClick(event) {
-    if (drag) return; // a drag just ended; ignore the synthetic click
+    if (suppressNextGridClickRef.current) {
+      suppressNextGridClickRef.current = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (event.target !== gridRef.current) return;
     const cell = pixelToCell(event.clientX, event.clientY);
     setSelectedId(null);
     setPendingCell(cell);
   }
 
-  const selected = selectedId ? items.find((x) => x.id === selectedId) : null;
+  const selected = selectedId ? items.find((x) => itemID(x) === selectedId) : null;
   const tileCamera = selected ? cameraById.get(selected.camera_id) : null;
 
   return (
     <div className="layout-canvas-wrap">
       <div
         ref={gridRef}
-        className="layout-canvas"
-        style={{ gridTemplateColumns: `repeat(${cols}, 1fr)`, gridAutoRows: `minmax(64px, auto)` }}
+        className="live-layout-grid layout-editor-grid editable"
+        style={{
+          '--layout-columns': cols,
+          gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${rows}, minmax(96px, auto))`,
+        }}
         onMouseMove={onGridMouseMove}
         onMouseUp={onGridMouseUp}
         onMouseLeave={onGridMouseUp}
@@ -855,18 +1443,20 @@ function LayoutCanvas({ layout, cameras, onChange, onError }) {
         {items.map((it) => {
           const cam = cameraById.get(it.camera_id);
           return (
-            <div
-              key={it.id}
-              className={'layout-tile' + (selectedId === it.id ? ' selected' : '')}
+            <section
+              key={itemID(it)}
+              className={'video-tile live-layout-tile layout-editor-tile' + (selectedId === itemID(it) ? ' selected' : '')}
               style={{ gridColumn: `${(it.x || 0) + 1} / span ${Math.max(1, it.width || 1)}`, gridRow: `${(it.y || 0) + 1} / span ${Math.max(1, it.height || 1)}` }}
-              onMouseDown={(e) => startDrag(it, 'move', e)}
-              onClick={(e) => { e.stopPropagation(); setSelectedId(it.id); }}
+              onClick={(e) => { e.stopPropagation(); setSelectedId(itemID(it)); }}
             >
-              <div className="layout-tile-label">
+              <div className="live-tile-bar" onMouseDown={(e) => startDrag(it, 'move', e)}>
                 <strong>{cam ? cam.name : shortID(it.camera_id)}</strong>
                 <span className="muted">{it.width || 1}×{it.height || 1}</span>
               </div>
-              {selectedId === it.id && (
+              <div className="live-tile-video layout-editor-tile-body">
+                <p>{cam ? (cam.location || cam.camera_group || shortID(cam.id)) : 'Camera unavailable'}</p>
+              </div>
+              {selectedId === itemID(it) && (
                 <>
                   {['nw','n','ne','e','se','s','sw','w'].map((h) => (
                     <span
@@ -877,7 +1467,7 @@ function LayoutCanvas({ layout, cameras, onChange, onError }) {
                   ))}
                 </>
               )}
-            </div>
+            </section>
           );
         })}
       </div>
@@ -967,10 +1557,9 @@ function LayoutsPage() {
   function activeLayout() {
     return layouts.find((l) => l.id === activeId) || null;
   }
-  function onItemsChanged(updatedItems) {
-    // Optimistic local update; refetch canonical state in background.
+  function onItemsChanged(updatedItems, options = {}) {
     setLayouts((prev) => prev.map((l) => l.id === activeId ? { ...l, layout_items: updatedItems } : l));
-    run();
+    if (options.refetch) run();
   }
 
   const layout = activeLayout();
@@ -1043,39 +1632,62 @@ function LiveLayoutPage() {
   const [result, setResult] = useState(null);
   const [actionError, setActionError] = useState('');
   const [opening, setOpening] = useState(false);
+  const [autoOpenedId, setAutoOpenedId] = useState('');
   const { loading, error, run } = useLoader(load);
 
   async function load() {
     const data = await api('/api/layouts');
     const list = data.layouts || [];
     setLayouts(list);
-    if (!layoutId && list.length) setLayoutId(list[0].id);
+    if (!layoutId && list.length) {
+      const preferred = list.find((item) => item.name === 'Main') || list.find((item) => item.is_default) || list[0];
+      setLayoutId(preferred.id);
+    }
   }
   useEffect(() => { run(); }, []);
 
   const layout = layouts.find((l) => l.id === layoutId) || null;
 
-  async function openLive() {
-    if (!layoutId) return;
-    setOpening(true);
+  async function loadLive(targetLayoutId = layoutId, { silent = false } = {}) {
+    if (!targetLayoutId) return;
+    if (!silent) setOpening(true);
     setActionError('');
     try {
-      setResult(await api(`/api/live/layouts/${layoutId}`));
+      setResult(await api(`/api/live/layouts/${targetLayoutId}`));
+      setAutoOpenedId(targetLayoutId);
     } catch (err) {
       setActionError(err.message || 'Unable to open live view.');
     } finally {
-      setOpening(false);
+      if (!silent) setOpening(false);
     }
   }
+
+  async function openLive(targetLayoutId = layoutId) {
+    await loadLive(targetLayoutId);
+  }
+
+  useEffect(() => {
+    if (layoutId && layoutId !== autoOpenedId && !opening && !result) {
+      openLive(layoutId);
+    }
+  }, [layoutId, autoOpenedId, opening, result]);
+
+  useEffect(() => {
+    if (!layoutId || !result?.cameras?.some((camera) => camera.status === 'starting')) return undefined;
+    const timer = window.setTimeout(() => {
+      loadLive(layoutId, { silent: true });
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [layoutId, result]);
 
   return (
     <Panel title="Live Layout">
       <Toolbar>
-        <select value={layoutId} onChange={(e) => setLayoutId(e.target.value)} disabled={!layouts.length}>
+        <select value={layoutId} onChange={(e) => { setResult(null); setAutoOpenedId(''); setLayoutId(e.target.value); }} disabled={!layouts.length}>
           {layouts.length === 0 && <option value="">No layouts</option>}
           {layouts.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
         </select>
-        <button onClick={openLive} disabled={!layoutId || opening}>{opening ? 'Opening...' : 'Open live'}</button>
+        <button onClick={() => openLive()} disabled={!layoutId || opening}>{opening ? 'Opening...' : 'Open live'}</button>
       </Toolbar>
       <State loading={loading} error={error} />
       {actionError && <ErrorText message={actionError} />}
@@ -1100,28 +1712,60 @@ function LiveLayoutPage() {
 function PlaybackPage() {
   const [layouts, setLayouts] = useState([]);
   const [layoutId, setLayoutId] = useState('');
+  const [selectedTime, setSelectedTime] = useState(() => new Date());
+  const [timeline, setTimeline] = useState(null);
   const [result, setResult] = useState(null);
   const [actionError, setActionError] = useState('');
   const [opening, setOpening] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [autoOpenedId, setAutoOpenedId] = useState('');
+  const [focusedCameraId, setFocusedCameraId] = useState('');
+  const videoRefs = React.useRef(new Map());
   const { loading, error, run } = useLoader(load);
 
   async function load() {
     const data = await api('/api/layouts');
     const list = data.layouts || [];
     setLayouts(list);
-    if (!layoutId && list.length) setLayoutId(list[0].id);
+    if (!layoutId && list.length) setLayoutId(preferredLayout(list)?.id || list[0].id);
   }
   useEffect(() => { run(); }, []);
 
-  async function openPlayback() {
-    if (!layoutId) return;
+  const layout = layouts.find((item) => item.id === layoutId);
+  useEffect(() => {
+    if (!layoutId || autoOpenedId === layoutId || opening) return;
+    openPlayback(layoutId, selectedTime, true);
+  }, [layoutId, autoOpenedId, opening]);
+
+  async function loadTimeline(targetLayout, timestamp) {
+    const ids = (targetLayout?.layout_items || []).map((item) => item.camera_id).filter(Boolean);
+    if (!ids.length) {
+      setTimeline(null);
+      return;
+    }
+    const [start, end] = dayBounds(timestamp);
+    const params = new URLSearchParams();
+    ids.forEach((id) => params.append('camera_id', id));
+    params.set('start_time', start.toISOString());
+    params.set('end_time', end.toISOString());
+    params.set('gap_threshold_seconds', '3');
+    setTimeline(await api(`/api/recordings/timeline?${params.toString()}`));
+  }
+
+  async function openPlayback(targetLayoutId = layoutId, timestamp = selectedTime, automatic = false) {
+    if (!targetLayoutId) return;
+    const targetLayout = layouts.find((item) => item.id === targetLayoutId);
     setOpening(true);
     setActionError('');
+    setPlaying(false);
     try {
-      setResult(await api('/api/playback/prepare', {
+      const prepared = await api('/api/playback/prepare', {
         method: 'POST',
-        body: JSON.stringify({ layout_id: layoutId, selected_timestamp: new Date().toISOString() }),
-      }));
+        body: JSON.stringify({ layout_id: targetLayoutId, selected_timestamp: timestamp.toISOString() }),
+      });
+      setResult(prepared);
+      await loadTimeline(targetLayout, timestamp);
+      setAutoOpenedId(targetLayoutId);
     } catch (err) {
       setActionError(err.message || 'Unable to open playback.');
     } finally {
@@ -1129,26 +1773,149 @@ function PlaybackPage() {
     }
   }
 
+  function handleLayoutChange(nextLayoutId) {
+    setLayoutId(nextLayoutId);
+    setResult(null);
+    setTimeline(null);
+    setAutoOpenedId('');
+    setFocusedCameraId('');
+    setPlaying(false);
+  }
+
+  function handleTimeChange(value) {
+    const next = new Date(value);
+    if (Number.isNaN(next.getTime())) return;
+    setSelectedTime(next);
+    setAutoOpenedId('');
+    openPlayback(layoutId, next);
+  }
+
+  function togglePlayback() {
+    const next = !playing;
+    videoRefs.current.forEach((video) => {
+      if (!video) return;
+      if (next) video.play?.().catch(() => {});
+      else video.pause?.();
+    });
+    setPlaying(next);
+  }
+
+  const playableCount = (result?.cameras || []).filter((camera) => camera.status === 'ok').length;
+
   return (
     <Panel title="Playback Review">
-      <Toolbar>
-        <select value={layoutId} onChange={(e) => setLayoutId(e.target.value)} disabled={!layouts.length}>
-          {layouts.length === 0 && <option value="">No layouts</option>}
-          {layouts.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-        </select>
-        <button onClick={openPlayback} disabled={!layoutId || opening}>{opening ? 'Opening...' : 'Open playback'}</button>
-      </Toolbar>
+      <div className="playback-toolbar">
+        <Field label="Layout">
+          <select value={layoutId} onChange={(e) => handleLayoutChange(e.target.value)} disabled={!layouts.length}>
+            {layouts.length === 0 && <option value="">No layouts</option>}
+            {layouts.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Date and time">
+          <input type="datetime-local" value={toLocalInputValue(selectedTime)} onChange={(e) => handleTimeChange(e.target.value)} />
+        </Field>
+        <button onClick={() => openPlayback(layoutId, selectedTime)} disabled={!layoutId || opening}>{opening ? 'Opening...' : 'Open playback'}</button>
+        <button onClick={togglePlayback} disabled={!playableCount}>{playing ? 'Pause all' : 'Play all'}</button>
+      </div>
       <State loading={loading} error={error} />
       {actionError && <ErrorText message={actionError} />}
       {!layouts.length && !loading && <EmptyState title="No layouts" body="Create a layout to start playing recorded footage." />}
-      {result && <VideoGrid cameras={result?.cameras || []} />}
+      {layout && (
+        <PlaybackTimeline
+          layout={layout}
+          cameras={result?.cameras || []}
+          timeline={timeline}
+          selectedTime={selectedTime}
+          resultLoaded={!!result}
+          onSelect={(timestamp) => {
+            setSelectedTime(timestamp);
+            setAutoOpenedId('');
+            openPlayback(layoutId, timestamp);
+          }}
+        />
+      )}
+      {result && (
+        <PlaybackLayoutGrid
+          layout={layout}
+          cameras={result?.cameras || []}
+          playing={playing}
+          videoRefs={videoRefs}
+          focusedCameraId={focusedCameraId}
+          onFocusCamera={setFocusedCameraId}
+          selectedTime={selectedTime}
+          timeline={timeline}
+          onSelectTime={(timestamp) => {
+            setSelectedTime(timestamp);
+            setAutoOpenedId('');
+            openPlayback(layoutId, timestamp);
+          }}
+          onTogglePlayback={togglePlayback}
+        />
+      )}
+      {!result && layout && !opening && <EmptyState title="Playback is loading" body={`${layout.name} opens automatically when the page is ready.`} />}
     </Panel>
   );
 }
 
-function PlaybackLayoutGrid({ layout, cameras, playing, videoRefs }) {
+function PlaybackTimeline({ layout, cameras, timeline, selectedTime, resultLoaded, onSelect }) {
+  const [start, end] = dayBounds(selectedTime);
+  const duration = end.getTime() - start.getTime();
+  const playheadLeft = pct((selectedTime.getTime() - start.getTime()) / duration);
+  const availability = new Map((timeline?.camera_availability || []).map((item) => [item.camera_id, item]));
+  const cameraNames = new Map(cameras.map((camera) => [camera.camera_id, camera.camera_name || shortID(camera.camera_id)]));
+  const visibleCameraIDs = resultLoaded ? new Set(cameras.map((camera) => camera.camera_id)) : null;
+  const items = (layout?.layout_items || []).filter((item) => item.camera_id && (!visibleCameraIDs || visibleCameraIDs.has(item.camera_id)));
+  const hasRanges = (timeline?.camera_availability || []).some((item) => (item.ranges || []).length > 0);
+
+  function selectFromEvent(event) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1);
+    onSelect(new Date(start.getTime() + ratio * duration));
+  }
+
+  return (
+    <section className="timeline-panel">
+      <div className="timeline-header">
+        <div>
+          <strong>Recording timeline</strong>
+          <span>{formatDateTime(selectedTime)}</span>
+        </div>
+        <span>{hasRanges ? 'Recorded ranges are highlighted' : 'No stored video on this day'}</span>
+      </div>
+      <div className="timeline-scale">
+        {['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', '24:00'].map((label) => <span key={label}>{label}</span>)}
+      </div>
+      <div className="timeline-stack">
+        {items.map((item) => {
+          const cameraID = item.camera_id;
+          const row = availability.get(cameraID) || { ranges: [] };
+          return (
+            <div className="timeline-row" key={item.id || item.item_id || cameraID}>
+              <span title={cameraNames.get(cameraID) || cameraID}>{cameraNames.get(cameraID) || shortID(cameraID)}</span>
+              <button className="timeline-track" type="button" onClick={selectFromEvent} aria-label={`Select playback time for ${cameraNames.get(cameraID) || cameraID}`}>
+                {(row.ranges || []).map((range, index) => (
+                  <span
+                    className="timeline-range"
+                    key={`${range.start_time}-${index}`}
+                    style={rangeStyle(range.start_time, range.end_time, start, end)}
+                  />
+                ))}
+                <span className="timeline-playhead" style={{ left: `${playheadLeft}%` }} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function PlaybackLayoutGrid({ layout, cameras, playing, videoRefs, focusedCameraId, onFocusCamera, selectedTime, timeline, onSelectTime, onTogglePlayback }) {
   const byCamera = new Map(cameras.map((camera) => [camera.camera_id, camera]));
-  const items = layout?.layout_items || cameras.map((camera, index) => ({
+  const tileRefs = React.useRef(new Map());
+  const [fullscreenFallbackId, setFullscreenFallbackId] = useState('');
+  const layoutItems = (layout?.layout_items || []).filter((item) => item.camera_id && byCamera.has(item.camera_id));
+  const items = layout ? layoutItems : cameras.map((camera, index) => ({
     camera_id: camera.camera_id,
     x: index % 2,
     y: Math.floor(index / 2),
@@ -1157,41 +1924,166 @@ function PlaybackLayoutGrid({ layout, cameras, playing, videoRefs }) {
   }));
   const columns = Math.max(1, Number(layout?.settings?.columns) || Math.max(...items.map((item) => Number(item.x || 0) + Number(item.width || 1)), 1));
   const rows = Math.max(1, Math.max(...items.map((item) => Number(item.y || 0) + Number(item.height || 1)), 1));
+  const focusedItem = items.find((item) => item.camera_id === focusedCameraId);
+  const visibleFocusedItem = focusedItem || null;
+  const sideItems = visibleFocusedItem ? items.filter((item) => item.camera_id !== visibleFocusedItem.camera_id) : [];
 
-  if (!items.length) return <EmptyState title="Nothing to play" body="The selected layout has no cameras yet." />;
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      if (!document.fullscreenElement) setFullscreenFallbackId('');
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
+
+  if (!items.length) return <EmptyState title="No available channels" body="No camera channels are available for this layout." />;
+
+  function requestFullscreen(cameraID) {
+    const target = tileRefs.current.get(cameraID) || videoRefs.current.get(cameraID);
+    if (!target?.requestFullscreen) {
+      setFullscreenFallbackId(cameraID);
+      return;
+    }
+    target.requestFullscreen().then(() => {
+      setFullscreenFallbackId('');
+    }).catch(() => {
+      setFullscreenFallbackId(cameraID);
+    });
+  }
+
+  function renderTile(item, options = {}) {
+    const camera = byCamera.get(item.camera_id) || { camera_id: item.camera_id, status: 'no_recording' };
+    const isFocused = camera.camera_id === focusedCameraId;
+    const isFullscreenFallback = camera.camera_id === fullscreenFallbackId;
+    const isNoData = camera.status === 'no_recording';
+    const register = (video) => {
+      if (video) videoRefs.current.set(camera.camera_id, video);
+      else videoRefs.current.delete(camera.camera_id);
+    };
+    return (
+      <section
+        className={'video-tile layout-video-tile' + (options.compact ? ' compact' : '') + (isFocused ? ' focused' : '') + (isFullscreenFallback ? ' fullscreen-fallback' : '') + (isNoData ? ' no-data' : '')}
+        key={item.id || item.item_id || item.camera_id}
+        ref={(node) => {
+          if (node) tileRefs.current.set(camera.camera_id, node);
+          else tileRefs.current.delete(camera.camera_id);
+        }}
+        style={options.style}
+      >
+        <div className="playback-tile-bar">
+          <div>
+            <strong>{camera.camera_name || shortID(camera.camera_id)}</strong>
+            <span><PlaybackStatusBadge status={camera.status} /></span>
+          </div>
+          <div className="playback-tile-actions">
+            {!options.compact && (
+              <button type="button" onClick={() => (isFocused ? onFocusCamera('') : onFocusCamera(camera.camera_id))}>
+                {isFocused ? 'Exit focus' : 'Focus'}
+              </button>
+            )}
+            {options.compact && <button type="button" onClick={() => onFocusCamera(camera.camera_id)}>Focus</button>}
+            {camera.status === 'ok' && (
+              <button type="button" onClick={() => (isFullscreenFallback ? setFullscreenFallbackId('') : requestFullscreen(camera.camera_id))}>
+                {isFullscreenFallback ? 'Exit fullscreen' : 'Fullscreen'}
+              </button>
+            )}
+          </div>
+        </div>
+        {camera.status === 'ok' && (
+          <>
+            <VideoPlayer
+              src={camera.segment?.playback_url}
+              offsetSeconds={camera.offset_seconds || 0}
+              controlled
+              playing={playing}
+              register={register}
+            />
+            <PlaybackFullscreenControls
+              cameraID={camera.camera_id}
+              playing={playing}
+              selectedTime={selectedTime}
+              timeline={timeline}
+              onSelectTime={onSelectTime}
+              onTogglePlayback={onTogglePlayback}
+            />
+          </>
+        )}
+        {camera.status !== 'ok' && (
+          camera.status === 'no_recording'
+            ? <NoDataPlaybackState />
+            : <p>{playbackStatusText(camera.status)}</p>
+        )}
+      </section>
+    );
+  }
+
+  if (visibleFocusedItem) {
+    return (
+      <div className="playback-focus-layout">
+        <div className="playback-focus-main">
+          {renderTile(visibleFocusedItem, { style: {} })}
+        </div>
+        {sideItems.length > 0 && (
+          <aside className="playback-focus-strip">
+            {sideItems.map((item) => renderTile(item, { compact: true }))}
+          </aside>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="layout-playback-grid" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gridAutoRows: 'minmax(180px, auto)' }}>
-      {items.map((item) => {
-        const camera = byCamera.get(item.camera_id) || { camera_id: item.camera_id, status: 'no_recording' };
-        const register = (video) => {
-          if (video) videoRefs.current.set(camera.camera_id, video);
-          else videoRefs.current.delete(camera.camera_id);
-        };
-        return (
-          <section
-            className="video-tile layout-video-tile"
-            key={item.id || item.item_id || item.camera_id}
-            style={{
-              gridColumn: `${Number(item.x || 0) + 1} / span ${Math.max(Number(item.width || 1), 1)}`,
-              gridRow: `${Number(item.y || 0) + 1} / span ${Math.max(Number(item.height || 1), 1)}`,
-            }}
-          >
-            <strong>{shortID(camera.camera_id)}</strong>
-            <span><PlaybackStatusBadge status={camera.status} /></span>
-            {camera.status === 'ok' && (
-              <VideoPlayer
-                src={camera.segment?.playback_url}
-                offsetSeconds={camera.offset_seconds || 0}
-                controlled
-                playing={playing}
-                register={register}
-              />
-            )}
-            {camera.status !== 'ok' && <p>{playbackStatusText(camera.status)}</p>}
-          </section>
-        );
-      })}
+      {items.map((item) => renderTile(item, {
+        style: {
+          gridColumn: `${Number(item.x || 0) + 1} / span ${Math.max(Number(item.width || 1), 1)}`,
+          gridRow: `${Number(item.y || 0) + 1} / span ${Math.max(Number(item.height || 1), 1)}`,
+        },
+      }))}
+    </div>
+  );
+}
+
+function PlaybackFullscreenControls({ cameraID, playing, selectedTime, timeline, onSelectTime, onTogglePlayback }) {
+  const [start, end] = dayBounds(selectedTime);
+  const duration = end.getTime() - start.getTime();
+  const playheadLeft = pct((selectedTime.getTime() - start.getTime()) / duration);
+  const availability = (timeline?.camera_availability || []).find((item) => item.camera_id === cameraID);
+
+  function selectFromEvent(event) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1);
+    onSelectTime(new Date(start.getTime() + ratio * duration));
+  }
+
+  return (
+    <div className="playback-fullscreen-controls">
+      <button type="button" onClick={onTogglePlayback}>{playing ? 'Pause' : 'Play'}</button>
+      <div className="fullscreen-timeline-wrap">
+        <span>{formatTimeOnly(start)}</span>
+        <button className="fullscreen-timeline-track" type="button" onClick={selectFromEvent} aria-label="Select playback time">
+          {(availability?.ranges || []).map((range, index) => (
+            <span
+              className="timeline-range"
+              key={`${range.start_time}-${index}`}
+              style={rangeStyle(range.start_time, range.end_time, start, end)}
+            />
+          ))}
+          <span className="timeline-playhead" style={{ left: `${playheadLeft}%` }} />
+        </button>
+        <span>{formatTimeOnly(selectedTime)}</span>
+      </div>
+    </div>
+  );
+}
+
+function NoDataPlaybackState() {
+  return (
+    <div className="playback-no-data">
+      <div className="playback-no-data-core">
+        <span />
+        <strong>No data in this time yet</strong>
+      </div>
     </div>
   );
 }
@@ -1211,9 +2103,40 @@ function VideoGrid({ cameras, live = false }) {
   );
 }
 
+function preferredLayout(layouts) {
+  return layouts.find((item) => item.name === 'Main') || layouts.find((item) => item.is_default) || layouts[0];
+}
+
+function dayBounds(date) {
+  const start = new Date(date);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return [start, end];
+}
+
+function pct(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(Math.max(value * 100, 0), 100);
+}
+
+function rangeStyle(startValue, endValue, dayStart, dayEnd) {
+  const start = new Date(startValue).getTime();
+  const end = new Date(endValue || startValue).getTime();
+  const min = dayStart.getTime();
+  const max = dayEnd.getTime();
+  const duration = max - min;
+  const left = pct((Math.max(start, min) - min) / duration);
+  const right = pct((Math.min(end, max) - min) / duration);
+  return { left: `${left}%`, width: `${Math.max(right - left, 0.4)}%` };
+}
+
 function LiveLayoutGrid({ layout, cameras, editable, onChange, onError }) {
-  const items = (layout.layout_items || []).slice().sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
   const byCamera = new Map(cameras.map((camera) => [camera.camera_id, camera]));
+  const items = (layout.layout_items || [])
+    .filter((item) => item.camera_id && byCamera.has(item.camera_id))
+    .slice()
+    .sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
   const cols = Math.max(1, Number(layout.settings?.columns) || Math.max(...items.map((item) => Number(item.x || 0) + Number(item.width || 1)), 1));
   const maxRow = items.reduce((m, item) => Math.max(m, Number(item.y || 0) + Number(item.height || 1)), 0);
   const rows = Math.max(1, maxRow || 1);
@@ -1316,7 +2239,7 @@ function LiveLayoutGrid({ layout, cameras, editable, onChange, onError }) {
     if (changed) saveItem(changed);
   }
 
-  if (!items.length) return <EmptyState title="No cameras in layout" body="Add cameras to this layout before opening live view." />;
+  if (!items.length) return <EmptyState title="No available channels" body="No camera channels are available for this layout." />;
 
   return (
     <div
@@ -1341,12 +2264,12 @@ function LiveLayoutGrid({ layout, cameras, editable, onChange, onError }) {
             onClick={() => editable && setSelectedId(id)}
           >
             <div className="live-tile-bar" onMouseDown={(event) => startDrag(item, 'move', event)}>
-              <strong>{shortID(camera.camera_id)}</strong>
+              <strong>{camera.camera_name || shortID(camera.camera_id)}</strong>
               <span><LiveStatusBadge status={camera.status} /></span>
             </div>
             <div className="live-tile-video">
               {camera.status === 'ok' && <VideoPlayer src={camera.hls_url} autoPlay />}
-              {camera.status !== 'ok' && <p>{camera.status}</p>}
+              {camera.status !== 'ok' && <p>{liveStatusText(camera.status)}</p>}
             </div>
             {editable && selectedId === id && (
               <>
@@ -1455,14 +2378,28 @@ function formatDateTime(value) {
   return date.toLocaleString();
 }
 
+function formatTimeOnly(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 function shortID(id) {
   return id ? id.slice(0, 8) : 'camera';
 }
 
 function playbackStatusText(status) {
   if (status === 'ok') return 'Ready';
-  if (status === 'no_recording') return 'No recording for this time.';
+  if (status === 'no_recording') return 'No data in this time yet.';
   if (status === 'forbidden') return 'Permission required.';
+  return status || 'Unavailable';
+}
+
+function liveStatusText(status) {
+  if (status === 'starting') return 'Starting stream...';
+  if (status === 'camera_disabled') return 'Camera disabled.';
+  if (status === 'stream_unavailable') return 'Stream unavailable.';
+  if (status === 'no_permission') return 'No permission.';
   return status || 'Unavailable';
 }
 
@@ -1476,6 +2413,42 @@ function formatStorageRow(item) {
     free_bytes: formatBytes(item.free_bytes || 0),
     latest_validation_error: item.latest_validation_error || '',
   };
+}
+
+function clampPercent(value) {
+  const percent = Number(value || 0);
+  if (!Number.isFinite(percent)) return 0;
+  return Math.max(0, Math.min(100, percent));
+}
+
+function storageSummary(items) {
+  const summary = items.reduce((acc, item) => {
+    const used = Number(item.used_bytes || 0);
+    const free = Number(item.free_bytes || 0);
+    const total = Number(item.total_bytes || used + free || 0);
+    acc.used += used;
+    acc.free += free;
+    acc.total += total;
+    if (item.is_enabled) acc.enabled += 1;
+    if (storageStatus(item).kind !== 'ok') acc.problemCount += 1;
+    return acc;
+  }, { used: 0, free: 0, total: 0, enabled: 0, problemCount: 0 });
+  summary.usedPercent = summary.total ? (summary.used / summary.total) * 100 : 0;
+  return summary;
+}
+
+function storageStatus(item) {
+  if (item.latest_validation_error || !item.exists || !item.writable || item.health_status === 'error') {
+    return { kind: 'error', badge: 'error', label: 'error' };
+  }
+  const usedPercent = clampPercent(item.used_percent);
+  if (item.health_status === 'warning' || usedPercent >= 90) {
+    return { kind: 'warning', badge: item.is_enabled ? 'warning' : 'muted', label: item.is_enabled ? 'warning' : 'disabled' };
+  }
+  if (!item.is_enabled) {
+    return { kind: 'muted', badge: 'muted', label: 'disabled' };
+  }
+  return { kind: 'ok', badge: 'ok', label: item.health_status || 'healthy' };
 }
 
 function formatCameraRow(item) {
@@ -1548,8 +2521,8 @@ function FormGrid({ children, onSubmit }) {
   return <form className="form-grid" onSubmit={onSubmit}>{children}</form>;
 }
 
-function Field({ label, children }) {
-  return <label className="field"><span>{label}</span>{children}</label>;
+function Field({ label, help, children }) {
+  return <label className="field"><span>{label}</span>{children}{help && <small>{help}</small>}</label>;
 }
 
 function Toolbar({ children }) {
@@ -1608,6 +2581,7 @@ function StatusBadge({ kind, text }) {
 
 function LiveStatusBadge({ status }) {
   if (status === 'ok') return <StatusBadge kind="ok" text="live" />;
+  if (status === 'starting') return <StatusBadge kind="warning" text="starting" />;
   if (status === 'camera_disabled') return <StatusBadge kind="muted" text="disabled" />;
   if (status === 'no_permission') return <StatusBadge kind="warning" text="no permission" />;
   if (status === 'stream_unavailable') return <StatusBadge kind="error" text="stream unavailable" />;
@@ -1616,7 +2590,7 @@ function LiveStatusBadge({ status }) {
 
 function PlaybackStatusBadge({ status }) {
   if (status === 'ok') return <StatusBadge kind="ok" text="ready" />;
-  if (status === 'no_recording') return <StatusBadge kind="muted" text="no recording" />;
+  if (status === 'no_recording') return <StatusBadge kind="muted" text="no data" />;
   if (status === 'forbidden') return <StatusBadge kind="warning" text="no permission" />;
   return <StatusBadge kind="error" text={status || 'unavailable'} />;
 }

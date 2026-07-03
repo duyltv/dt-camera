@@ -19,6 +19,7 @@ type Server struct {
 	cfg            Config
 	streams        *hlsManager
 	loginLimiter   *loginRateLimiter
+	hlsWarmStop    chan struct{}
 	sessionStop    chan struct{}
 	alertStop      chan struct{}
 	retentionStop  chan struct{}
@@ -32,6 +33,9 @@ type Config struct {
 	SessionTTLHours        int
 	HLSRoot                string
 	HLSInactivitySeconds   int
+	HLSWarmEnabled         bool
+	HLSWarmInterval        time.Duration
+	PreviewCacheRoot       string
 	LoginRateLimitPerKey   int
 	LoginRateLimitPerIP    int
 	LoginRateLimitWindow   time.Duration
@@ -45,13 +49,19 @@ type Config struct {
 
 func NewServer(recordingsPath string, db *sql.DB, cfg Config) *Server {
 	if cfg.SessionTTLHours <= 0 {
-		cfg.SessionTTLHours = 168
+		cfg.SessionTTLHours = 2160
 	}
 	if cfg.HLSRoot == "" {
 		cfg.HLSRoot = "/tmp/dt-camera-hls"
 	}
 	if cfg.HLSInactivitySeconds <= 0 {
 		cfg.HLSInactivitySeconds = 60
+	}
+	if cfg.HLSWarmInterval <= 0 {
+		cfg.HLSWarmInterval = 15 * time.Second
+	}
+	if cfg.PreviewCacheRoot == "" {
+		cfg.PreviewCacheRoot = "/tmp/dt-camera-previews"
 	}
 	if cfg.LoginRateLimitPerKey <= 0 {
 		cfg.LoginRateLimitPerKey = 10
@@ -74,7 +84,7 @@ func NewServer(recordingsPath string, db *sql.DB, cfg Config) *Server {
 	if cfg.RetentionInterval <= 0 {
 		cfg.RetentionInterval = 6 * time.Hour
 	}
-	manager := newHLSManager(db, cfg.HLSRoot, time.Duration(cfg.HLSInactivitySeconds)*time.Second)
+	manager := newHLSManager(db, cfg.HLSRoot, time.Duration(cfg.HLSInactivitySeconds)*time.Second, cfg.HLSWarmEnabled)
 	limiter := newLoginRateLimiter(
 		cfg.LoginRateLimitPerKey,
 		cfg.LoginRateLimitPerIP,
@@ -88,11 +98,15 @@ func NewServer(recordingsPath string, db *sql.DB, cfg Config) *Server {
 		cfg:            cfg,
 		streams:        manager,
 		loginLimiter:   limiter,
+		hlsWarmStop:    make(chan struct{}),
 		sessionStop:    make(chan struct{}),
 		alertStop:      make(chan struct{}),
 		retentionStop:  make(chan struct{}),
 	}
 	go manager.cleanupLoop(context.Background())
+	if cfg.HLSWarmEnabled {
+		go manager.warmLoop(context.Background(), cfg.HLSWarmInterval, srv.hlsWarmStop)
+	}
 	go srv.sessionCleanupLoop(context.Background(), cfg.SessionCleanupInterval, srv.sessionStop)
 	go srv.alertEvaluationLoop(context.Background(), cfg.AlertEvalInterval, srv.alertStop)
 	go srv.retentionLoopWithState(context.Background(), cfg.RetentionInterval, srv.retentionStop)
@@ -112,6 +126,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/storage-locations", s.handleStorageLocations)
 	mux.HandleFunc("/api/storage-locations/", s.handleStorageLocationByID)
 	mux.HandleFunc("/api/cameras", s.handleCameras)
+	mux.HandleFunc("/api/cameras/scan", s.handleCameraScan)
+	mux.HandleFunc("/api/cameras/onvif/test", s.handleCameraONVIFTest)
+	mux.HandleFunc("/api/cameras/onvif/preview", s.handleCameraONVIFPreview)
+	mux.HandleFunc("/api/cameras/onvif/import", s.handleCameraONVIFImport)
 	mux.HandleFunc("/api/cameras/", s.handleCameraByID)
 	mux.HandleFunc("/api/layouts", s.handleLayouts)
 	mux.HandleFunc("/api/layouts/", s.handleLayoutByID)
@@ -137,6 +155,10 @@ func (s *Server) ShutdownStreams() {
 	if s.streams != nil {
 		s.streams.stopAll()
 		log.Printf("hls streams stopped")
+	}
+	if s.hlsWarmStop != nil {
+		close(s.hlsWarmStop)
+		s.hlsWarmStop = nil
 	}
 	if s.sessionStop != nil {
 		close(s.sessionStop)
@@ -226,13 +248,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	migMax, migCount, _ := s.fetchMigrationStats(ctx)
 	writeJSON(w, statusCode, map[string]any{
-		"database":            dbStatus,
-		"status":              appStatus,
-		"service":             "backend",
-		"started_at":          s.startedAt.Format(time.RFC3339),
-		"app_version":         version.Snapshot().AppVersion,
-		"latest_migration":    migMax,
-		"migrations_applied":  migCount,
+		"database":           dbStatus,
+		"status":             appStatus,
+		"service":            "backend",
+		"started_at":         s.startedAt.Format(time.RFC3339),
+		"app_version":        version.Snapshot().AppVersion,
+		"latest_migration":   migMax,
+		"migrations_applied": migCount,
 	})
 }
 

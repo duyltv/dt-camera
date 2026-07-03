@@ -29,7 +29,7 @@ services:
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:${APP_PORT:-8088}}
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
-      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-168}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-2160}
       SESSION_CLEANUP_INTERVAL_SECONDS: ${SESSION_CLEANUP_INTERVAL_SECONDS:-15m}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
@@ -45,9 +45,13 @@ services:
       RETENTION_INTERVAL_SECONDS: ${RETENTION_INTERVAL_SECONDS:-6h}
       HLS_ROOT: ${HLS_ROOT:-/tmp/dt-camera-hls}
       HLS_INACTIVITY_SECONDS: ${HLS_INACTIVITY_SECONDS:-60}
+      HLS_WARM_ENABLED: ${HLS_WARM_ENABLED:-true}
+      HLS_WARM_INTERVAL_SECONDS: ${HLS_WARM_INTERVAL_SECONDS:-15s}
+      PREVIEW_CACHE_ROOT: ${PREVIEW_CACHE_ROOT:-/var/lib/dt-camera/previews}
     volumes:
       - ${RECORDINGS_HOST_PATH:-./data/recordings}:${RECORDINGS_CONTAINER_PATH:-/recordings}
       - hls_data:${HLS_ROOT:-/tmp/dt-camera-hls}
+      - preview_cache:${PREVIEW_CACHE_ROOT:-/var/lib/dt-camera/previews}
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,3 +120,4 @@ services:
 volumes:
   postgres_data:
   hls_data:
+  preview_cache:

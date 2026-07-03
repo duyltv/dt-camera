@@ -124,7 +124,7 @@ func TestValidateProductionEnvLongSessionTTLWarns(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("DATABASE_URL", "postgres://u:p@h/d")
 	t.Setenv("COOKIE_SECURE", "true")
-	t.Setenv("SESSION_TTL_HOURS", "999")
+	t.Setenv("SESSION_TTL_HOURS", "2161")
 	results := validateProductionEnv()
 	for _, r := range results {
 		if r.name == "SESSION_TTL_HOURS" && r.ok {
@@ -133,15 +133,15 @@ func TestValidateProductionEnvLongSessionTTLWarns(t *testing.T) {
 	}
 }
 
-func TestValidateProductionEnvShortSessionTTLIsOK(t *testing.T) {
+func TestValidateProductionEnvThreeMonthSessionTTLIsOK(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("DATABASE_URL", "postgres://u:p@h/d")
 	t.Setenv("COOKIE_SECURE", "true")
-	t.Setenv("SESSION_TTL_HOURS", "12")
+	t.Setenv("SESSION_TTL_HOURS", "2160")
 	results := validateProductionEnv()
 	for _, r := range results {
 		if r.name == "SESSION_TTL_HOURS" && !r.ok {
-			t.Fatalf("SESSION_TTL_HOURS=12 should be ok: %+v", r)
+			t.Fatalf("SESSION_TTL_HOURS=2160 should be ok: %+v", r)
 		}
 	}
 }

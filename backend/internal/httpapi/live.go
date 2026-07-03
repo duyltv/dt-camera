@@ -12,13 +12,15 @@ import (
 )
 
 type liveStreamResponse struct {
-	CameraID string `json:"camera_id"`
-	Status   string `json:"status"`
-	HLSURL   string `json:"hls_url,omitempty"`
+	CameraID   string `json:"camera_id"`
+	CameraName string `json:"camera_name,omitempty"`
+	Status     string `json:"status"`
+	HLSURL     string `json:"hls_url,omitempty"`
 }
 
 type layoutLiveCameraResponse struct {
 	CameraID   string                      `json:"camera_id"`
+	CameraName string                      `json:"camera_name,omitempty"`
 	Status     string                      `json:"status"`
 	HLSURL     string                      `json:"hls_url,omitempty"`
 	LayoutItem *layoutItemPositionResponse `json:"layout_item,omitempty"`
@@ -68,8 +70,12 @@ func (s *Server) handleLiveLayoutByID(w http.ResponseWriter, r *http.Request) {
 	cameras := make([]layoutLiveCameraResponse, 0, len(targets))
 	for _, target := range targets {
 		info := s.liveInfoForCamera(r, user, target.CameraID)
+		if info.Status == "no_permission" {
+			continue
+		}
 		cameras = append(cameras, layoutLiveCameraResponse{
 			CameraID:   target.CameraID,
+			CameraName: info.CameraName,
 			Status:     info.Status,
 			HLSURL:     info.HLSURL,
 			LayoutItem: target.LayoutItem,
@@ -90,13 +96,19 @@ func (s *Server) liveInfoForCamera(r *http.Request, user userResponse, cameraID 
 		if s.streams != nil {
 			s.streams.stop(cameraID)
 		}
-		return liveStreamResponse{CameraID: cameraID, Status: "camera_disabled"}
+		return liveStreamResponse{CameraID: cameraID, CameraName: camera.Name, Status: "camera_disabled"}
 	}
 	hlsURL, err := s.streams.ensureStream(r.Context(), camera)
 	if err != nil {
-		return liveStreamResponse{CameraID: cameraID, Status: "stream_unavailable"}
+		return liveStreamResponse{CameraID: cameraID, CameraName: camera.Name, Status: "stream_unavailable"}
 	}
-	return liveStreamResponse{CameraID: cameraID, Status: "ok", HLSURL: hlsURL}
+	if !s.streams.streamReady(cameraID) {
+		if s.streams.waitReady(r.Context(), cameraID, 2*time.Second) {
+			return liveStreamResponse{CameraID: cameraID, CameraName: camera.Name, Status: "ok", HLSURL: hlsURL}
+		}
+		return liveStreamResponse{CameraID: cameraID, CameraName: camera.Name, Status: "starting", HLSURL: hlsURL}
+	}
+	return liveStreamResponse{CameraID: cameraID, CameraName: camera.Name, Status: "ok", HLSURL: hlsURL}
 }
 
 func (s *Server) findLiveCamera(r *http.Request, cameraID string) (liveCamera, error) {

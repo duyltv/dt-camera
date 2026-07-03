@@ -63,6 +63,7 @@ type playbackPrepareRequest struct {
 
 type playbackPrepareCameraResponse struct {
 	CameraID          string                      `json:"camera_id"`
+	CameraName        string                      `json:"camera_name,omitempty"`
 	Status            string                      `json:"status"`
 	SelectedTimestamp time.Time                   `json:"selected_timestamp"`
 	SegmentStartTime  *time.Time                  `json:"segment_start_time,omitempty"`
@@ -73,6 +74,7 @@ type playbackPrepareCameraResponse struct {
 
 type playbackCameraTarget struct {
 	CameraID   string
+	CameraName string
 	LayoutItem *layoutItemPositionResponse
 }
 
@@ -184,12 +186,6 @@ func (s *Server) handlePlaybackPrepare(w http.ResponseWriter, r *http.Request) {
 	results := make([]playbackPrepareCameraResponse, 0, len(targets))
 	for _, target := range targets {
 		if !s.canViewPlayback(r, user, target.CameraID) {
-			results = append(results, playbackPrepareCameraResponse{
-				CameraID:          target.CameraID,
-				Status:            "forbidden",
-				SelectedTimestamp: req.SelectedTimestamp,
-				LayoutItem:        target.LayoutItem,
-			})
 			continue
 		}
 		segment, err := s.findBestSegmentAround(r, target.CameraID, req.SelectedTimestamp)
@@ -197,6 +193,7 @@ func (s *Server) handlePlaybackPrepare(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, sql.ErrNoRows) {
 				results = append(results, playbackPrepareCameraResponse{
 					CameraID:          target.CameraID,
+					CameraName:        target.CameraName,
 					Status:            "no_recording",
 					SelectedTimestamp: req.SelectedTimestamp,
 					LayoutItem:        target.LayoutItem,
@@ -216,6 +213,7 @@ func (s *Server) handlePlaybackPrepare(w http.ResponseWriter, r *http.Request) {
 		segmentStartTime := segment.StartTime
 		results = append(results, playbackPrepareCameraResponse{
 			CameraID:          target.CameraID,
+			CameraName:        target.CameraName,
 			Status:            "ok",
 			SelectedTimestamp: req.SelectedTimestamp,
 			SegmentStartTime:  &segmentStartTime,
@@ -396,10 +394,9 @@ func (s *Server) findBestSegmentAround(r *http.Request, cameraID string, selecte
 		FROM recording_segments
 		WHERE camera_id = $1
 			AND status = 'completed'
-		ORDER BY
-			CASE WHEN start_time <= $2 AND COALESCE(end_time, start_time) >= $2 THEN 0 ELSE 1 END,
-			LEAST(ABS(EXTRACT(EPOCH FROM (start_time - $2))), ABS(EXTRACT(EPOCH FROM (COALESCE(end_time, start_time) - $2)))),
-			start_time DESC
+			AND start_time <= $2
+			AND COALESCE(end_time, start_time) >= $2
+		ORDER BY start_time DESC
 		LIMIT 1
 	`, cameraID, selected)
 	return scanRecordingSegmentInternal(row)
@@ -412,10 +409,11 @@ func (s *Server) resolvePlaybackCameraTargets(r *http.Request, req playbackPrepa
 			return nil, fmt.Errorf("layout_id must be a UUID")
 		}
 		rows, err := s.db.QueryContext(r.Context(), `
-			SELECT id, layout_id, camera_id, position_x, position_y, width, height, display_order, tile_type
-			FROM layout_items
-			WHERE layout_id = $1 AND camera_id IS NOT NULL
-			ORDER BY display_order, position_y, position_x
+			SELECT li.id, li.layout_id, li.camera_id, c.name, li.position_x, li.position_y, li.width, li.height, li.display_order, li.tile_type
+			FROM layout_items li
+			JOIN cameras c ON c.id = li.camera_id
+			WHERE li.layout_id = $1 AND li.camera_id IS NOT NULL
+			ORDER BY li.display_order, li.position_y, li.position_x
 		`, layoutID)
 		if err != nil {
 			return nil, err
@@ -426,10 +424,12 @@ func (s *Server) resolvePlaybackCameraTargets(r *http.Request, req playbackPrepa
 		for rows.Next() {
 			var item layoutItemPositionResponse
 			var cameraID string
+			var cameraName string
 			if err := rows.Scan(
 				&item.ItemID,
 				&item.LayoutID,
 				&cameraID,
+				&cameraName,
 				&item.X,
 				&item.Y,
 				&item.Width,
@@ -439,7 +439,7 @@ func (s *Server) resolvePlaybackCameraTargets(r *http.Request, req playbackPrepa
 			); err != nil {
 				return nil, err
 			}
-			targets = append(targets, playbackCameraTarget{CameraID: cameraID, LayoutItem: &item})
+			targets = append(targets, playbackCameraTarget{CameraID: cameraID, CameraName: cameraName, LayoutItem: &item})
 		}
 		if err := rows.Err(); err != nil {
 			return nil, err
@@ -465,9 +465,26 @@ func (s *Server) resolvePlaybackCameraTargets(r *http.Request, req playbackPrepa
 			return nil, fmt.Errorf("camera_ids must contain only UUID values")
 		}
 	}
+	rows, err := s.db.QueryContext(r.Context(), `SELECT id, name FROM cameras WHERE id = ANY($1::uuid[])`, pq.Array(cameraIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cameraNames := map[string]string{}
+	for rows.Next() {
+		var cameraID string
+		var cameraName string
+		if err := rows.Scan(&cameraID, &cameraName); err != nil {
+			return nil, err
+		}
+		cameraNames[cameraID] = cameraName
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	targets := make([]playbackCameraTarget, 0, len(cameraIDs))
 	for _, cameraID := range cameraIDs {
-		targets = append(targets, playbackCameraTarget{CameraID: cameraID})
+		targets = append(targets, playbackCameraTarget{CameraID: cameraID, CameraName: cameraNames[cameraID]})
 	}
 	return targets, nil
 }

@@ -75,9 +75,10 @@ func TestHLSPlaylistReadyRequiresPlaylistAndSegment(t *testing.T) {
 
 func TestLayoutLiveResponseShape(t *testing.T) {
 	response := layoutLiveCameraResponse{
-		CameraID: "018f5d67-89ab-4def-8123-456789abcdef",
-		Status:   "ok",
-		HLSURL:   "/hls/018f5d67-89ab-4def-8123-456789abcdef/index.m3u8",
+		CameraID:   "018f5d67-89ab-4def-8123-456789abcdef",
+		CameraName: "Front Gate",
+		Status:     "ok",
+		HLSURL:     "/hls/018f5d67-89ab-4def-8123-456789abcdef/index.m3u8",
 		LayoutItem: &layoutItemPositionResponse{
 			ItemID:   "018f5d67-89ab-4def-8123-456789abcdea",
 			LayoutID: "018f5d67-89ab-4def-8123-456789abcdeb",
@@ -96,7 +97,7 @@ func TestLayoutLiveResponseShape(t *testing.T) {
 	if strings.Contains(body, "rtsp://") {
 		t.Fatalf("live response leaked RTSP URL: %s", body)
 	}
-	for _, expected := range []string{`"hls_url"`, `"/hls/`, `"layout_item"`, `"tile_type":"large"`} {
+	for _, expected := range []string{`"camera_name":"Front Gate"`, `"hls_url"`, `"/hls/`, `"layout_item"`, `"tile_type":"large"`} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("expected %s in response body: %s", expected, body)
 		}

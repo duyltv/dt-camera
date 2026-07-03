@@ -29,6 +29,7 @@ type hlsManager struct {
 	db         *sql.DB
 	root       string
 	inactivity time.Duration
+	alwaysWarm bool
 	mu         sync.Mutex
 	streams    map[string]*hlsStream
 }
@@ -41,11 +42,12 @@ type hlsStream struct {
 	lastUsed time.Time
 }
 
-func newHLSManager(db *sql.DB, root string, inactivity time.Duration) *hlsManager {
+func newHLSManager(db *sql.DB, root string, inactivity time.Duration, alwaysWarm bool) *hlsManager {
 	return &hlsManager{
 		db:         db,
 		root:       root,
 		inactivity: inactivity,
+		alwaysWarm: alwaysWarm,
 		streams:    make(map[string]*hlsStream),
 	}
 }
@@ -113,14 +115,19 @@ func (m *hlsManager) ensureStream(ctx context.Context, camera liveCamera) (strin
 		}
 	}()
 
-	if err := waitForHLSReady(ctx, playlist, 12*time.Second); err != nil {
-		delete(m.streams, camera.ID)
-		stopHLSProcess(stream)
-		_ = insertSystemEvent(ctx, m.db, eventRecord{EventType: "live.failure", EntityType: "camera", EntityID: &camera.ID, Severity: "error", Message: "live stream playlist was not ready", Metadata: map[string]any{"camera_name": camera.Name, "error": err.Error()}})
-		return "", err
-	}
-
 	return "/hls/" + camera.ID + "/index.m3u8", nil
+}
+
+func (m *hlsManager) streamReady(cameraID string) bool {
+	return hlsPlaylistReady(filepath.Join(m.root, cameraID, "index.m3u8"))
+}
+
+func (m *hlsManager) waitReady(ctx context.Context, cameraID string, timeout time.Duration) bool {
+	if timeout <= 0 {
+		return m.streamReady(cameraID)
+	}
+	playlist := filepath.Join(m.root, cameraID, "index.m3u8")
+	return waitForHLSReady(ctx, playlist, timeout) == nil
 }
 
 func waitForHLSReady(ctx context.Context, playlist string, timeout time.Duration) error {
@@ -209,7 +216,8 @@ func (m *hlsManager) cleanupStale() {
 	now := time.Now()
 	m.mu.Lock()
 	for cameraID, stream := range m.streams {
-		if now.Sub(stream.lastUsed) > m.inactivity || !m.cameraStillEnabled(cameraID) {
+		inactive := !m.alwaysWarm && now.Sub(stream.lastUsed) > m.inactivity
+		if inactive || !m.cameraStillEnabled(cameraID) {
 			stale = append(stale, cameraID)
 		}
 	}
@@ -218,6 +226,53 @@ func (m *hlsManager) cleanupStale() {
 		log.Printf("hls stream stopping camera_id=%s reason=inactive_or_disabled", cameraID)
 		m.stop(cameraID)
 		_ = os.RemoveAll(filepath.Join(m.root, cameraID))
+	}
+}
+
+func (m *hlsManager) warmLoop(ctx context.Context, interval time.Duration, stop <-chan struct{}) {
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
+	m.warmEnabledCameras(ctx)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.warmEnabledCameras(ctx)
+		}
+	}
+}
+
+func (m *hlsManager) warmEnabledCameras(ctx context.Context) {
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT id, name, rtsp_url, is_enabled
+		FROM cameras
+		WHERE is_enabled = true
+		ORDER BY name
+	`)
+	if err != nil {
+		log.Printf("hls warm scan failed: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var camera liveCamera
+		if err := rows.Scan(&camera.ID, &camera.Name, &camera.RTSPURL, &camera.Enabled); err != nil {
+			log.Printf("hls warm scan row failed: %v", err)
+			continue
+		}
+		if _, err := m.ensureStream(ctx, camera); err != nil {
+			log.Printf("hls warm start failed camera_id=%s camera_name=%q error=%v", camera.ID, camera.Name, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("hls warm scan rows failed: %v", err)
 	}
 }
 
