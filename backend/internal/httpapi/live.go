@@ -98,6 +98,12 @@ func (s *Server) liveInfoForCamera(r *http.Request, user userResponse, cameraID 
 		}
 		return liveStreamResponse{CameraID: cameraID, CameraName: camera.Name, Status: "camera_disabled"}
 	}
+	if !camera.StreamEnabled {
+		if s.streams != nil {
+			s.streams.stop(cameraID)
+		}
+		return liveStreamResponse{CameraID: cameraID, CameraName: camera.Name, Status: "stream_disabled"}
+	}
 	hlsURL, err := s.streams.ensureStream(r.Context(), camera)
 	if err != nil {
 		return liveStreamResponse{CameraID: cameraID, CameraName: camera.Name, Status: "stream_unavailable"}
@@ -112,9 +118,9 @@ func (s *Server) liveInfoForCamera(r *http.Request, user userResponse, cameraID 
 }
 
 func (s *Server) findLiveCamera(r *http.Request, cameraID string) (liveCamera, error) {
-	row := s.db.QueryRowContext(r.Context(), `SELECT id, name, rtsp_url, is_enabled FROM cameras WHERE id = $1`, cameraID)
+	row := s.db.QueryRowContext(r.Context(), `SELECT id, name, rtsp_url, is_enabled, stream_enabled, stream_audio FROM cameras WHERE id = $1`, cameraID)
 	var camera liveCamera
-	if err := row.Scan(&camera.ID, &camera.Name, &camera.RTSPURL, &camera.Enabled); err != nil {
+	if err := row.Scan(&camera.ID, &camera.Name, &camera.RTSPURL, &camera.Enabled, &camera.StreamEnabled, &camera.StreamAudio); err != nil {
 		if err == sql.ErrNoRows {
 			return liveCamera{}, err
 		}

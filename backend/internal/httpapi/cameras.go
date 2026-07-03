@@ -15,6 +15,9 @@ type cameraResponse struct {
 	CameraGroup       *string   `json:"camera_group,omitempty"`
 	Enabled           bool      `json:"enabled"`
 	RecordingEnabled  bool      `json:"recording_enabled"`
+	RecordAudio       bool      `json:"record_audio"`
+	StreamEnabled     bool      `json:"stream_enabled"`
+	StreamAudio       bool      `json:"stream_audio"`
 	RetentionDays     int       `json:"retention_days"`
 	MaxStorageBytes   *int64    `json:"max_storage_bytes,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
@@ -29,6 +32,9 @@ type createCameraRequest struct {
 	CameraGroup       *string `json:"camera_group,omitempty"`
 	Enabled           *bool   `json:"enabled,omitempty"`
 	RecordingEnabled  *bool   `json:"recording_enabled,omitempty"`
+	RecordAudio       *bool   `json:"record_audio,omitempty"`
+	StreamEnabled     *bool   `json:"stream_enabled,omitempty"`
+	StreamAudio       *bool   `json:"stream_audio,omitempty"`
 	RetentionDays     *int    `json:"retention_days,omitempty"`
 	MaxStorageBytes   *int64  `json:"max_storage_bytes,omitempty"`
 }
@@ -41,6 +47,9 @@ type updateCameraRequest struct {
 	CameraGroup       *string `json:"camera_group,omitempty"`
 	Enabled           *bool   `json:"enabled,omitempty"`
 	RecordingEnabled  *bool   `json:"recording_enabled,omitempty"`
+	RecordAudio       *bool   `json:"record_audio,omitempty"`
+	StreamEnabled     *bool   `json:"stream_enabled,omitempty"`
+	StreamAudio       *bool   `json:"stream_audio,omitempty"`
 	RetentionDays     *int    `json:"retention_days,omitempty"`
 	MaxStorageBytes   *int64  `json:"max_storage_bytes,omitempty"`
 }
@@ -139,6 +148,9 @@ func (s *Server) createCamera(w http.ResponseWriter, r *http.Request) {
 	if req.RecordingEnabled != nil {
 		recordingEnabled = *req.RecordingEnabled
 	}
+	recordAudio := boolValue(req.RecordAudio, false)
+	streamEnabled := boolValue(req.StreamEnabled, true)
+	streamAudio := boolValue(req.StreamAudio, false)
 	retentionDays := 30
 	if req.RetentionDays != nil {
 		retentionDays = *req.RetentionDays
@@ -153,10 +165,10 @@ func (s *Server) createCamera(w http.ResponseWriter, r *http.Request) {
 	}
 
 	row := s.db.QueryRowContext(r.Context(), `
-		INSERT INTO cameras (name, rtsp_url, storage_location_id, location, camera_group, is_enabled, recording_enabled, retention_days, max_storage_bytes)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING id, storage_location_id, name, location, camera_group, is_enabled, recording_enabled, retention_days, max_storage_bytes, created_at, updated_at
-	`, name, rtspURL, nullableString(req.StorageLocationID), nullableCleanString(req.Location), nullableCleanString(req.CameraGroup), enabled, recordingEnabled, retentionDays, nullableInt64(req.MaxStorageBytes))
+		INSERT INTO cameras (name, rtsp_url, storage_location_id, location, camera_group, is_enabled, recording_enabled, record_audio, stream_enabled, stream_audio, retention_days, max_storage_bytes)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		RETURNING id, storage_location_id, name, location, camera_group, is_enabled, recording_enabled, record_audio, stream_enabled, stream_audio, retention_days, max_storage_bytes, created_at, updated_at
+	`, name, rtspURL, nullableString(req.StorageLocationID), nullableCleanString(req.Location), nullableCleanString(req.CameraGroup), enabled, recordingEnabled, recordAudio, streamEnabled, streamAudio, retentionDays, nullableInt64(req.MaxStorageBytes))
 
 	camera, err := scanCamera(row)
 	if err != nil {
@@ -169,7 +181,7 @@ func (s *Server) createCamera(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listCameras(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, storage_location_id, name, location, camera_group, is_enabled, recording_enabled, retention_days, max_storage_bytes, created_at, updated_at
+		SELECT id, storage_location_id, name, location, camera_group, is_enabled, recording_enabled, record_audio, stream_enabled, stream_audio, retention_days, max_storage_bytes, created_at, updated_at
 		FROM cameras
 		ORDER BY name
 	`)
@@ -309,6 +321,18 @@ func (s *Server) updateCamera(w http.ResponseWriter, r *http.Request, id string)
 	if req.RecordingEnabled != nil {
 		recordingEnabled = *req.RecordingEnabled
 	}
+	recordAudio := current.RecordAudio
+	if req.RecordAudio != nil {
+		recordAudio = *req.RecordAudio
+	}
+	streamEnabled := current.StreamEnabled
+	if req.StreamEnabled != nil {
+		streamEnabled = *req.StreamEnabled
+	}
+	streamAudio := current.StreamAudio
+	if req.StreamAudio != nil {
+		streamAudio = *req.StreamAudio
+	}
 	retentionDays := current.RetentionDays
 	if req.RetentionDays != nil {
 		retentionDays = *req.RetentionDays
@@ -330,10 +354,11 @@ func (s *Server) updateCamera(w http.ResponseWriter, r *http.Request, id string)
 	row := s.db.QueryRowContext(r.Context(), `
 		UPDATE cameras
 		SET name = $2, rtsp_url = $3, storage_location_id = $4, location = $5, camera_group = $6,
-			is_enabled = $7, recording_enabled = $8, retention_days = $9, max_storage_bytes = $10
+			is_enabled = $7, recording_enabled = $8, record_audio = $9, stream_enabled = $10, stream_audio = $11,
+			retention_days = $12, max_storage_bytes = $13
 		WHERE id = $1
-		RETURNING id, storage_location_id, name, location, camera_group, is_enabled, recording_enabled, retention_days, max_storage_bytes, created_at, updated_at
-	`, id, name, rtspURL, nullableString(storageLocationID), nullableString(location), nullableString(cameraGroup), enabled, recordingEnabled, retentionDays, nullableInt64(maxStorageBytes))
+		RETURNING id, storage_location_id, name, location, camera_group, is_enabled, recording_enabled, record_audio, stream_enabled, stream_audio, retention_days, max_storage_bytes, created_at, updated_at
+	`, id, name, rtspURL, nullableString(storageLocationID), nullableString(location), nullableString(cameraGroup), enabled, recordingEnabled, recordAudio, streamEnabled, streamAudio, retentionDays, nullableInt64(maxStorageBytes))
 
 	camera, err := scanCamera(row)
 	if err != nil {
@@ -359,7 +384,7 @@ func (s *Server) setCameraEnabled(w http.ResponseWriter, r *http.Request, id str
 		UPDATE cameras
 		SET is_enabled = $2
 		WHERE id = $1
-		RETURNING id, storage_location_id, name, location, camera_group, is_enabled, recording_enabled, retention_days, max_storage_bytes, created_at, updated_at
+		RETURNING id, storage_location_id, name, location, camera_group, is_enabled, recording_enabled, record_audio, stream_enabled, stream_audio, retention_days, max_storage_bytes, created_at, updated_at
 	`, id, req.Enabled)
 
 	camera, err := scanCamera(row)
@@ -384,7 +409,7 @@ func (s *Server) deleteCamera(w http.ResponseWriter, r *http.Request, id string)
 			UPDATE cameras
 			SET is_enabled = FALSE, recording_enabled = FALSE
 			WHERE id = $1
-			RETURNING id, storage_location_id, name, location, camera_group, is_enabled, recording_enabled, retention_days, max_storage_bytes, created_at, updated_at
+			RETURNING id, storage_location_id, name, location, camera_group, is_enabled, recording_enabled, record_audio, stream_enabled, stream_audio, retention_days, max_storage_bytes, created_at, updated_at
 		`, id)
 		camera, err := scanCamera(row)
 		if err != nil {
@@ -440,7 +465,7 @@ func (s *Server) validateStorageLocationForCamera(r *http.Request, storageLocati
 
 func (s *Server) findCamera(r *http.Request, id string) (cameraResponse, error) {
 	row := s.db.QueryRowContext(r.Context(), `
-		SELECT id, storage_location_id, name, location, camera_group, is_enabled, recording_enabled, retention_days, max_storage_bytes, created_at, updated_at
+		SELECT id, storage_location_id, name, location, camera_group, is_enabled, recording_enabled, record_audio, stream_enabled, stream_audio, retention_days, max_storage_bytes, created_at, updated_at
 		FROM cameras
 		WHERE id = $1
 	`, id)
@@ -454,7 +479,7 @@ type cameraInternal struct {
 
 func (s *Server) findCameraInternal(r *http.Request, id string) (cameraInternal, error) {
 	row := s.db.QueryRowContext(r.Context(), `
-		SELECT id, storage_location_id, name, location, camera_group, is_enabled, recording_enabled, retention_days, max_storage_bytes, created_at, updated_at, rtsp_url
+		SELECT id, storage_location_id, name, location, camera_group, is_enabled, recording_enabled, record_audio, stream_enabled, stream_audio, retention_days, max_storage_bytes, created_at, updated_at, rtsp_url
 		FROM cameras
 		WHERE id = $1
 	`, id)
@@ -479,6 +504,9 @@ func scanCamera(scanner cameraScanner) (cameraResponse, error) {
 		&cameraGroup,
 		&camera.Enabled,
 		&camera.RecordingEnabled,
+		&camera.RecordAudio,
+		&camera.StreamEnabled,
+		&camera.StreamAudio,
 		&camera.RetentionDays,
 		&maxStorageBytes,
 		&camera.CreatedAt,
@@ -515,6 +543,9 @@ func scanCameraInternal(scanner cameraScanner) (cameraInternal, error) {
 		&cameraGroup,
 		&camera.Enabled,
 		&camera.RecordingEnabled,
+		&camera.RecordAudio,
+		&camera.StreamEnabled,
+		&camera.StreamAudio,
 		&camera.RetentionDays,
 		&maxStorageBytes,
 		&camera.CreatedAt,
@@ -568,6 +599,13 @@ func nullableString(value *string) any {
 		return nil
 	}
 	return strings.TrimSpace(*value)
+}
+
+func boolValue(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
 }
 
 func nullableInt64(value *int64) any {

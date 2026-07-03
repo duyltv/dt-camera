@@ -111,3 +111,24 @@ func TestRetentionStorageHealthMigrationAddsPhase11Columns(t *testing.T) {
 		}
 	}
 }
+
+func TestCameraMediaFlagsMigrationAddsAudioAndStreamControls(t *testing.T) {
+	migrations, err := LoadMigrations()
+	if err != nil {
+		t.Fatalf("LoadMigrations() error = %v", err)
+	}
+
+	var mediaMigration string
+	for _, migration := range migrations {
+		if migration.Name == "007_camera_media_flags.sql" {
+			mediaMigration = migration.SQL
+			break
+		}
+	}
+
+	for _, expected := range []string{"record_audio", "stream_enabled", "stream_audio", "cameras_stream_enabled_idx"} {
+		if !strings.Contains(mediaMigration, expected) {
+			t.Fatalf("media migration should include %s", expected)
+		}
+	}
+}

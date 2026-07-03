@@ -16,6 +16,7 @@ func fetchEnabledCameras(ctx context.Context, db *sql.DB) ([]Camera, error) {
 			c.rtsp_url,
 			c.storage_location_id,
 			s.container_path,
+			c.record_audio,
 			c.retention_days,
 			c.max_storage_bytes,
 			c.updated_at
@@ -41,6 +42,7 @@ func fetchEnabledCameras(ctx context.Context, db *sql.DB) ([]Camera, error) {
 			&camera.RTSPURL,
 			&camera.StorageLocationID,
 			&camera.StoragePath,
+			&camera.RecordAudio,
 			&camera.RetentionDays,
 			&camera.MaxStorageBytes,
 			&camera.UpdatedAt,

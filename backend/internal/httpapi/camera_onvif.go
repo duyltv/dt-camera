@@ -28,6 +28,9 @@ type onvifCameraRequest struct {
 	StorageLocationID *string `json:"storage_location_id,omitempty"`
 	Enabled           *bool   `json:"enabled,omitempty"`
 	RecordingEnabled  *bool   `json:"recording_enabled,omitempty"`
+	RecordAudio       *bool   `json:"record_audio,omitempty"`
+	StreamEnabled     *bool   `json:"stream_enabled,omitempty"`
+	StreamAudio       *bool   `json:"stream_audio,omitempty"`
 	RetentionDays     *int    `json:"retention_days,omitempty"`
 	MaxStorageBytes   *int64  `json:"max_storage_bytes,omitempty"`
 }
@@ -113,13 +116,16 @@ func (s *Server) handleCameraONVIFImport(w http.ResponseWriter, r *http.Request)
 	if req.RecordingEnabled != nil {
 		recordingEnabled = *req.RecordingEnabled
 	}
+	recordAudio := boolValue(req.RecordAudio, false)
+	streamEnabled := boolValue(req.StreamEnabled, true)
+	streamAudio := boolValue(req.StreamAudio, false)
 	location := hostFromHTTPURL(req.XAddr)
 	cameraGroup := "Discovered"
 	row := s.db.QueryRowContext(r.Context(), `
-		INSERT INTO cameras (name, rtsp_url, storage_location_id, location, camera_group, is_enabled, recording_enabled, retention_days, max_storage_bytes)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING id, storage_location_id, name, location, camera_group, is_enabled, recording_enabled, retention_days, max_storage_bytes, created_at, updated_at
-	`, name, stream.RTSPURL, nullableString(req.StorageLocationID), nullableString(&location), nullableString(&cameraGroup), enabled, recordingEnabled, retentionDays, nullableInt64(req.MaxStorageBytes))
+		INSERT INTO cameras (name, rtsp_url, storage_location_id, location, camera_group, is_enabled, recording_enabled, record_audio, stream_enabled, stream_audio, retention_days, max_storage_bytes)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		RETURNING id, storage_location_id, name, location, camera_group, is_enabled, recording_enabled, record_audio, stream_enabled, stream_audio, retention_days, max_storage_bytes, created_at, updated_at
+	`, name, stream.RTSPURL, nullableString(req.StorageLocationID), nullableString(&location), nullableString(&cameraGroup), enabled, recordingEnabled, recordAudio, streamEnabled, streamAudio, retentionDays, nullableInt64(req.MaxStorageBytes))
 	camera, err := scanCamera(row)
 	if err != nil {
 		if err == sql.ErrNoRows {

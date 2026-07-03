@@ -25,13 +25,21 @@ type Camera struct {
 	RTSPURL           string
 	StorageLocationID string
 	StoragePath       string
+	RecordAudio       bool
 	RetentionDays     int
 	MaxStorageBytes   *int64
 	UpdatedAt         time.Time
 }
 
 func (c Camera) ConfigKey() string {
-	return c.ID + "|" + c.RTSPURL + "|" + c.StorageLocationID + "|" + c.StoragePath + "|" + c.UpdatedAt.Format(time.RFC3339Nano)
+	return c.ID + "|" + c.RTSPURL + "|" + c.StorageLocationID + "|" + c.StoragePath + "|" + fmtBool(c.RecordAudio) + "|" + c.UpdatedAt.Format(time.RFC3339Nano)
+}
+
+func fmtBool(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
 }
 
 type SegmentMetadata struct {

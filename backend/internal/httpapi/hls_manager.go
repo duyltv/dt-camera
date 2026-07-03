@@ -19,10 +19,23 @@ import (
 var hlsURLLogPattern = regexp.MustCompile(`(?i)(rtsp|tcp)://[^\s"']+`)
 
 type liveCamera struct {
-	ID      string
-	Name    string
-	RTSPURL string
-	Enabled bool
+	ID            string
+	Name          string
+	RTSPURL       string
+	Enabled       bool
+	StreamEnabled bool
+	StreamAudio   bool
+}
+
+func (c liveCamera) hlsConfigKey() string {
+	return c.ID + "|" + c.RTSPURL + "|" + fmtBool(c.StreamEnabled) + "|" + fmtBool(c.StreamAudio)
+}
+
+func fmtBool(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
 }
 
 type hlsManager struct {
@@ -36,6 +49,7 @@ type hlsManager struct {
 
 type hlsStream struct {
 	camera   liveCamera
+	config   string
 	cmd      *exec.Cmd
 	cancel   context.CancelFunc
 	started  time.Time
@@ -57,8 +71,12 @@ func (m *hlsManager) ensureStream(ctx context.Context, camera liveCamera) (strin
 	defer m.mu.Unlock()
 
 	if stream, ok := m.streams[camera.ID]; ok && stream.cmd.Process != nil {
-		stream.lastUsed = time.Now()
-		return "/hls/" + camera.ID + "/index.m3u8", nil
+		if stream.config == camera.hlsConfigKey() {
+			stream.lastUsed = time.Now()
+			return "/hls/" + camera.ID + "/index.m3u8", nil
+		}
+		delete(m.streams, camera.ID)
+		stopHLSProcess(stream)
 	}
 
 	outputDir := filepath.Join(m.root, camera.ID)
@@ -74,15 +92,21 @@ func (m *hlsManager) ensureStream(ctx context.Context, camera liveCamera) (strin
 		"-loglevel", "warning",
 		"-rtsp_transport", "tcp",
 		"-i", camera.RTSPURL,
-		"-an",
 		"-c:v", "copy",
+	}
+	if camera.StreamAudio {
+		args = append(args, "-c:a", "aac", "-b:a", "64k")
+	} else {
+		args = append(args, "-an")
+	}
+	args = append(args,
 		"-f", "hls",
 		"-hls_time", "2",
 		"-hls_list_size", "6",
 		"-hls_flags", "delete_segments+append_list+omit_endlist",
 		"-hls_segment_filename", filepath.Join(outputDir, "segment_%05d.ts"),
 		playlist,
-	}
+	)
 	cmd := exec.CommandContext(childCtx, "ffmpeg", args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stderr := &limitedHLSBuffer{max: 8192}
@@ -95,7 +119,7 @@ func (m *hlsManager) ensureStream(ctx context.Context, camera liveCamera) (strin
 		return "", fmt.Errorf("start hls ffmpeg: %w", err)
 	}
 
-	stream := &hlsStream{camera: camera, cmd: cmd, cancel: cancel, started: time.Now(), lastUsed: time.Now()}
+	stream := &hlsStream{camera: camera, config: camera.hlsConfigKey(), cmd: cmd, cancel: cancel, started: time.Now(), lastUsed: time.Now()}
 	m.streams[camera.ID] = stream
 	_ = insertSystemEvent(ctx, m.db, eventRecord{EventType: "live.start", EntityType: "camera", EntityID: &camera.ID, Message: "live stream started", Metadata: map[string]any{"camera_name": camera.Name}})
 	go func() {
@@ -250,9 +274,10 @@ func (m *hlsManager) warmLoop(ctx context.Context, interval time.Duration, stop 
 
 func (m *hlsManager) warmEnabledCameras(ctx context.Context) {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT id, name, rtsp_url, is_enabled
+		SELECT id, name, rtsp_url, is_enabled, stream_enabled, stream_audio
 		FROM cameras
 		WHERE is_enabled = true
+			AND stream_enabled = true
 		ORDER BY name
 	`)
 	if err != nil {
@@ -263,7 +288,7 @@ func (m *hlsManager) warmEnabledCameras(ctx context.Context) {
 
 	for rows.Next() {
 		var camera liveCamera
-		if err := rows.Scan(&camera.ID, &camera.Name, &camera.RTSPURL, &camera.Enabled); err != nil {
+		if err := rows.Scan(&camera.ID, &camera.Name, &camera.RTSPURL, &camera.Enabled, &camera.StreamEnabled, &camera.StreamAudio); err != nil {
 			log.Printf("hls warm scan row failed: %v", err)
 			continue
 		}
@@ -278,7 +303,7 @@ func (m *hlsManager) warmEnabledCameras(ctx context.Context) {
 
 func (m *hlsManager) cameraStillEnabled(cameraID string) bool {
 	var enabled bool
-	if err := m.db.QueryRow(`SELECT is_enabled FROM cameras WHERE id = $1`, cameraID).Scan(&enabled); err != nil {
+	if err := m.db.QueryRow(`SELECT is_enabled AND stream_enabled FROM cameras WHERE id = $1`, cameraID).Scan(&enabled); err != nil {
 		return false
 	}
 	return enabled

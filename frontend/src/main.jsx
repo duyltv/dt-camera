@@ -509,6 +509,9 @@ function CamerasPage() {
       camera_group: values.camera_group.trim() || null,
       enabled: values.enabled,
       recording_enabled: values.recording_enabled,
+      record_audio: values.record_audio,
+      stream_enabled: values.stream_enabled,
+      stream_audio: values.stream_audio,
       retention_days: Number(values.retention_days),
       max_storage_bytes: values.max_storage_bytes ? Number(values.max_storage_bytes) : null,
     };
@@ -661,6 +664,9 @@ function CamerasPage() {
       max_storage_bytes: values.max_storage_bytes ? Number(values.max_storage_bytes) : null,
       enabled: values.enabled,
       recording_enabled: values.recording_enabled,
+      record_audio: values.record_audio,
+      stream_enabled: values.stream_enabled,
+      stream_audio: values.stream_audio,
     };
   }
 
@@ -905,6 +911,7 @@ function CamerasPage() {
                   <div className="camera-statuses">
                     <StatusBadge kind={camera.enabled ? 'ok' : 'muted'} text={camera.enabled ? 'enabled' : 'disabled'} />
                     <StatusBadge kind={camera.recording_enabled ? 'ok' : 'warning'} text={camera.recording_enabled ? 'recording' : 'not recording'} />
+                    <StatusBadge kind={camera.stream_enabled ? 'ok' : 'muted'} text={camera.stream_enabled ? 'streaming' : 'stream off'} />
                   </div>
                 </div>
                 <div className="camera-preview-panel">
@@ -940,6 +947,7 @@ function CamerasPage() {
                     <dl className="camera-facts">
                       <div><dt>Storage</dt><dd>{storageName(camera.storage_location_id)}</dd></div>
                       <div><dt>Retention</dt><dd>{camera.retention_days} days</dd></div>
+                      <div><dt>Audio</dt><dd>{camera.record_audio || camera.stream_audio ? `${camera.record_audio ? 'Record' : ''}${camera.record_audio && camera.stream_audio ? ' + ' : ''}${camera.stream_audio ? 'Live' : ''}` : 'Off'}</dd></div>
                       <div><dt>Max storage</dt><dd>{camera.max_storage_bytes ? formatBytes(camera.max_storage_bytes) : 'No cap'}</dd></div>
                       <div><dt>Updated</dt><dd>{formatDateTime(camera.updated_at)}</dd></div>
                     </dl>
@@ -981,6 +989,9 @@ function newCameraForm() {
     camera_group: '',
     enabled: true,
     recording_enabled: false,
+    record_audio: false,
+    stream_enabled: true,
+    stream_audio: false,
     retention_days: 30,
     max_storage_bytes: '',
   };
@@ -1007,6 +1018,9 @@ function newONVIFImportForm(device) {
     max_storage_bytes: '',
     enabled: true,
     recording_enabled: false,
+    record_audio: false,
+    stream_enabled: true,
+    stream_audio: false,
   };
 }
 
@@ -1044,6 +1058,9 @@ function ONVIFImportForm({ device, form, storage, busy, message, previewUrl, onC
       <div className="camera-switches">
         <label className="switch-row"><input type="checkbox" checked={form.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} /> Camera enabled</label>
         <label className="switch-row"><input type="checkbox" checked={form.recording_enabled} onChange={(e) => onChange({ recording_enabled: e.target.checked })} /> Record video</label>
+        <label className="switch-row"><input type="checkbox" checked={form.record_audio} onChange={(e) => onChange({ record_audio: e.target.checked })} /> Record audio</label>
+        <label className="switch-row"><input type="checkbox" checked={form.stream_enabled} onChange={(e) => onChange({ stream_enabled: e.target.checked })} /> Stream video</label>
+        <label className="switch-row"><input type="checkbox" checked={form.stream_audio} onChange={(e) => onChange({ stream_audio: e.target.checked })} /> Stream audio</label>
       </div>
       <div className="form-actions">
         <button type="button" disabled={Boolean(busy)} onClick={onTest}>{busy === 'test' ? 'Testing...' : 'Test'}</button>
@@ -1108,6 +1125,9 @@ function cameraToForm(camera) {
     camera_group: camera.camera_group || '',
     enabled: Boolean(camera.enabled),
     recording_enabled: Boolean(camera.recording_enabled),
+    record_audio: Boolean(camera.record_audio),
+    stream_enabled: camera.stream_enabled !== false,
+    stream_audio: Boolean(camera.stream_audio),
     retention_days: camera.retention_days || 30,
     max_storage_bytes: camera.max_storage_bytes || '',
   };
@@ -1173,6 +1193,18 @@ function CameraForm({ form, setForm, storage, onSubmit, submitText, rtspRequired
           <label className="switch-row">
             <input type="checkbox" checked={form.recording_enabled} onChange={(e) => setForm({ ...form, recording_enabled: e.target.checked })} />
             <span><strong>Record video</strong><small>Start recording when storage is selected and the recorder sees this channel.</small></span>
+          </label>
+          <label className="switch-row">
+            <input type="checkbox" checked={form.record_audio} onChange={(e) => setForm({ ...form, record_audio: e.target.checked })} />
+            <span><strong>Record audio</strong><small>Include camera audio in saved recording segments when available.</small></span>
+          </label>
+          <label className="switch-row">
+            <input type="checkbox" checked={form.stream_enabled} onChange={(e) => setForm({ ...form, stream_enabled: e.target.checked })} />
+            <span><strong>Stream video</strong><small>Keep this channel available in Live views and warm HLS buffers.</small></span>
+          </label>
+          <label className="switch-row">
+            <input type="checkbox" checked={form.stream_audio} onChange={(e) => setForm({ ...form, stream_audio: e.target.checked })} />
+            <span><strong>Stream audio</strong><small>Include camera audio in HLS live streams when available.</small></span>
           </label>
         </div>
       </div>
@@ -2398,6 +2430,7 @@ function playbackStatusText(status) {
 function liveStatusText(status) {
   if (status === 'starting') return 'Starting stream...';
   if (status === 'camera_disabled') return 'Camera disabled.';
+  if (status === 'stream_disabled') return 'Live stream disabled.';
   if (status === 'stream_unavailable') return 'Stream unavailable.';
   if (status === 'no_permission') return 'No permission.';
   return status || 'Unavailable';
@@ -2583,6 +2616,7 @@ function LiveStatusBadge({ status }) {
   if (status === 'ok') return <StatusBadge kind="ok" text="live" />;
   if (status === 'starting') return <StatusBadge kind="warning" text="starting" />;
   if (status === 'camera_disabled') return <StatusBadge kind="muted" text="disabled" />;
+  if (status === 'stream_disabled') return <StatusBadge kind="muted" text="stream off" />;
   if (status === 'no_permission') return <StatusBadge kind="warning" text="no permission" />;
   if (status === 'stream_unavailable') return <StatusBadge kind="error" text="stream unavailable" />;
   return <StatusBadge kind="muted" text={status || 'unknown'} />;

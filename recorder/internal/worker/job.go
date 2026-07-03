@@ -131,14 +131,20 @@ func (j *recordingJob) runFFmpeg(ctx context.Context) error {
 		"-loglevel", "warning",
 		"-rtsp_transport", "tcp",
 		"-i", j.camera.RTSPURL,
-		"-an",
-		"-c", "copy",
+		"-c:v", "copy",
+	}
+	if j.camera.RecordAudio {
+		args = append(args, "-c:a", "aac", "-b:a", "96k")
+	} else {
+		args = append(args, "-an")
+	}
+	args = append(args,
 		"-f", "segment",
 		"-segment_time", fmt.Sprintf("%d", j.segmentSeconds),
 		"-reset_timestamps", "1",
 		"-strftime", "1",
 		outputPattern,
-	}
+	)
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
