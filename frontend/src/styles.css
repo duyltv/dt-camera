@@ -169,6 +169,13 @@ button:disabled {
   color: #6b7280;
 }
 
+.topbar span {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .panel {
   border: 1px solid #d9e1ec;
   border-radius: 8px;
@@ -358,15 +365,22 @@ button:disabled {
   padding-bottom: 16px;
 }
 
-.storage-create-form {
+.storage-form {
   align-items: start;
   background: #ffffff;
   border: 1px solid #d9e1ec;
   border-radius: 8px;
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.15fr) minmax(220px, 1fr) minmax(220px, 1fr) auto;
   padding: 14px;
+}
+
+.storage-create-form {
+  grid-template-columns:
+    minmax(170px, 1fr)
+    minmax(240px, 1.35fr)
+    minmax(150px, 0.8fr)
+    minmax(96px, 0.45fr);
 }
 
 .storage-size-fields {
@@ -375,8 +389,44 @@ button:disabled {
   grid-template-columns: minmax(120px, 1fr) 92px;
 }
 
+.storage-create-form .storage-size-fields {
+  display: contents;
+}
+
 .storage-enable-row {
   min-height: 64px;
+}
+
+.storage-form .field {
+  grid-template-rows: auto minmax(34px, auto) 38px;
+}
+
+.storage-form .field input,
+.storage-form .field select {
+  align-self: end;
+  min-height: 38px;
+}
+
+.storage-create-form .storage-enable-row,
+.storage-create-form .form-actions {
+  align-self: stretch;
+  min-height: 48px;
+}
+
+.storage-create-form .storage-enable-row {
+  grid-column: 1 / 4;
+}
+
+.storage-create-form .form-actions {
+  grid-column: 4;
+  justify-content: flex-end;
+  padding-bottom: 0;
+}
+
+.storage-create-form .form-actions button {
+  min-height: 48px;
+  white-space: nowrap;
+  width: 100%;
 }
 
 .storage-card-grid {
@@ -1665,6 +1715,15 @@ video {
   gap: 12px;
 }
 
+.layout-playback-grid.simple-list {
+  grid-template-columns: 1fr;
+}
+
+.layout-playback-grid.simple-list .layout-video-tile {
+  grid-column: auto;
+  grid-row: auto;
+}
+
 .layout-video-tile {
   display: grid;
   grid-template-rows: var(--camera-tile-bar-height) minmax(0, 1fr);
@@ -1922,7 +1981,7 @@ video {
 }
 
 .live-layout-grid.editable,
-.layout-editor-grid {
+.layout-editor-grid.editable {
   touch-action: none;
 }
 
@@ -2306,6 +2365,25 @@ video {
   .camera-form-section-heading {
     grid-column: 1 / -1;
   }
+
+  .storage-create-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .storage-create-form .storage-field-name,
+  .storage-create-form .storage-field-path,
+  .storage-create-form .storage-field-limit,
+  .storage-create-form .storage-field-unit {
+    grid-column: span 1;
+  }
+
+  .storage-create-form .storage-enable-row {
+    grid-column: 1;
+  }
+
+  .storage-create-form .form-actions {
+    grid-column: 2;
+  }
 }
 
 @media (max-width: 760px) {
@@ -2339,18 +2417,26 @@ video {
     grid-template-columns: 1fr !important;
   }
 
-  .live-layout-grid:not(.editable):not(.layout-editor-grid) {
+  .layout-playback-grid,
+  .live-layout-grid:not(.editable),
+  .layout-editor-grid:not(.editable) {
+    gap: 14px;
+  }
+
+  .live-layout-grid:not(.editable),
+  .layout-editor-grid:not(.editable) {
     grid-template-columns: 1fr !important;
   }
 
   .layout-video-tile,
-  .live-layout-grid:not(.editable):not(.layout-editor-grid) .live-layout-tile {
+  .live-layout-grid:not(.editable) .live-layout-tile,
+  .layout-editor-grid:not(.editable) .layout-editor-tile {
     grid-column: auto !important;
     grid-row: auto !important;
   }
 
   .live-layout-grid.editable,
-  .layout-editor-grid {
+  .layout-editor-grid.editable {
     min-width: 720px;
   }
 
@@ -2415,6 +2501,15 @@ video {
 
   .storage-size-fields {
     grid-template-columns: 1fr 96px;
+  }
+
+  .storage-create-form .storage-field-name,
+  .storage-create-form .storage-field-path,
+  .storage-create-form .storage-field-limit,
+  .storage-create-form .storage-field-unit,
+  .storage-create-form .storage-enable-row,
+  .storage-create-form .form-actions {
+    grid-column: 1 / -1;
   }
 
   .permissions-layout,
@@ -2536,14 +2631,19 @@ video {
 }
 
 .badge-admin {
-  background: #0f766e;
-  border: 1px solid #0f766e;
-  color: white;
+  background: #e0f2fe;
+  border: 1px solid #7dd3fc;
+  color: #075985;
   margin-left: 8px;
 }
 
 .topbar .badge-admin {
+  background: #0f766e;
+  border-color: #0f766e;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+  color: #ffffff;
   margin-left: 6px;
+  vertical-align: middle;
 }
 
 .row-actions {

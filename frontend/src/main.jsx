@@ -37,6 +37,21 @@ function useAuth() {
   return useContext(AuthContext);
 }
 
+function useIsMobileLayout() {
+  const [isMobile, setIsMobile] = useState(() => (
+    typeof window !== 'undefined' ? window.matchMedia('(max-width: 760px)').matches : false
+  ));
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const query = window.matchMedia('(max-width: 760px)');
+    const update = () => setIsMobile(query.matches);
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+  return isMobile;
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -614,7 +629,7 @@ function StoragePage() {
           <h3>Add storage location</h3>
           <p>Use the container path mounted into backend and recorder, for example <code>/recordings</code>.</p>
         </div>
-        <form className="storage-create-form" onSubmit={create}>
+        <form className="storage-form storage-create-form" onSubmit={create}>
           <StorageFields form={form} onChange={(patch) => setForm({ ...form, ...patch })} />
           <div className="form-actions">
             <button>Create storage</button>
@@ -697,17 +712,17 @@ function storageToForm(item) {
 function StorageFields({ form, onChange }) {
   return (
     <>
-      <Field label="Display name" help="Shown in camera setup and health dashboards.">
+      <Field className="storage-field-name" label="Display name" help="Shown in camera setup and health dashboards.">
         <input placeholder="Primary recordings" value={form.name} onChange={(e) => onChange({ name: e.target.value })} required />
       </Field>
-      <Field label="Container path" help="Backend validates that this folder exists and is writable inside the container.">
+      <Field className="storage-field-path" label="Container path" help="Backend validates that this folder exists and is writable inside the container.">
         <input placeholder="/recordings" value={form.container_path} onChange={(e) => onChange({ container_path: e.target.value })} required />
       </Field>
       <div className="storage-size-fields">
-        <Field label="Configured limit" help="Optional operator limit used for capacity display.">
+        <Field className="storage-field-limit" label="Configured limit" help="Optional operator limit used for capacity display.">
           <input type="number" min="1" step="0.1" placeholder="No limit" value={form.max_storage_size} onChange={(e) => onChange({ max_storage_size: e.target.value })} />
         </Field>
-        <Field label="Unit" help="MB, GB, or TB.">
+        <Field className="storage-field-unit" label="Unit" help="MB, GB, or TB.">
           <select value={form.max_storage_unit} onChange={(e) => onChange({ max_storage_unit: e.target.value })}>
             <option value="MB">MB</option>
             <option value="GB">GB</option>
@@ -740,7 +755,7 @@ function StorageLocationCard({ item, editing, editForm, onCancelEdit, onEdit, on
   return (
     <section className={`storage-card storage-card-${status.kind}`}>
       {editing ? (
-        <form className="storage-edit-form" onSubmit={onSaveEdit}>
+        <form className="storage-form storage-edit-form" onSubmit={onSaveEdit}>
           <StorageFields form={editForm} onChange={onEditChange} />
           <div className="form-actions">
             <button>Save storage</button>
@@ -818,8 +833,15 @@ function CamerasPage() {
   async function load() {
     const [cameraData, storageData] = await Promise.all([api('/api/cameras'), api('/api/storage-locations')]);
     const nextCameras = cameraData.cameras || [];
+    const storageLocations = storageData.storage_locations || [];
     setCameras(nextCameras);
-    setStorage(storageData.storage_locations || []);
+    setStorage(storageLocations);
+    setForm((current) => {
+      if (current.storage_location_id || current.name || current.rtsp_url) return current;
+      const storageID = firstEnabledStorageID(storageLocations);
+      if (!storageID) return current;
+      return { ...current, storage_location_id: storageID, recording_enabled: true };
+    });
     loadCameraPreviews(nextCameras);
   }
   useEffect(() => { run(); }, []);
@@ -971,7 +993,7 @@ function CamerasPage() {
   }
 
   function onvifFormFor(device) {
-    return onvifForms[deviceKey(device)] || newONVIFImportForm(device);
+    return onvifForms[deviceKey(device)] || newONVIFImportForm(device, storage);
   }
 
   function updateONVIFForm(device, patch) {
@@ -1315,13 +1337,17 @@ function newCameraForm() {
     location: '',
     camera_group: '',
     enabled: true,
-    recording_enabled: false,
+    recording_enabled: true,
     record_audio: false,
     stream_enabled: true,
     stream_audio: false,
     retention_days: 30,
     max_storage_bytes: '',
   };
+}
+
+function firstEnabledStorageID(storageLocations = []) {
+  return storageLocations.find((item) => item.enabled !== false && item.is_enabled !== false)?.id || '';
 }
 
 function newCameraScanForm() {
@@ -1335,16 +1361,17 @@ function newCameraScanForm() {
   };
 }
 
-function newONVIFImportForm(device) {
+function newONVIFImportForm(device, storageLocations = []) {
+  const storageID = firstEnabledStorageID(storageLocations);
   return {
     name: [device.manufacturer, device.model].filter(Boolean).join(' ') || `Camera ${device.ip}`,
     username: '',
     password: '',
-    storage_location_id: '',
+    storage_location_id: storageID,
     retention_days: 30,
     max_storage_bytes: '',
     enabled: true,
-    recording_enabled: false,
+    recording_enabled: true,
     record_audio: false,
     stream_enabled: true,
     stream_audio: false,
@@ -1789,7 +1816,7 @@ function PermissionToggle({ active, disabled, label, onClick, statusText }) {
   );
 }
 
-function LayoutCanvas({ layout, cameras, onChange, onError }) {
+function LayoutCanvas({ layout, cameras, onChange, onError, editable = true }) {
   const items = (layout.layout_items || []).slice().sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
   const cols = Math.max(1, Number(layout.settings?.columns) || 4);
   const maxRow = items.reduce((m, item) => Math.max(m, Number(item.y || 0) + Number(item.height || 1)), 0);
@@ -1837,6 +1864,7 @@ function LayoutCanvas({ layout, cameras, onChange, onError }) {
   }
 
   function startDrag(item, mode, event) {
+    if (!editable) return;
     event.preventDefault();
     event.stopPropagation();
     suppressNextGridClickRef.current = false;
@@ -1895,7 +1923,7 @@ function LayoutCanvas({ layout, cameras, onChange, onError }) {
   }
 
   function onGridMouseMove(event) {
-    if (!drag) return;
+    if (!editable || !drag) return;
     if (!drag.moved && dragHasMoved(drag, event)) {
       setDrag({ ...drag, moved: true });
     }
@@ -1903,7 +1931,7 @@ function LayoutCanvas({ layout, cameras, onChange, onError }) {
   }
 
   function onGridMouseUp(event) {
-    if (!drag) return;
+    if (!editable || !drag) return;
     const shouldSuppressClick = dragHasMoved(drag, event);
     const updated = updatedItemsForDrag(event);
     const changed = updated.find((item) => itemID(item) === drag.itemId);
@@ -1948,6 +1976,7 @@ function LayoutCanvas({ layout, cameras, onChange, onError }) {
   }
 
   function onGridClick(event) {
+    if (!editable) return;
     if (suppressNextGridClickRef.current) {
       suppressNextGridClickRef.current = false;
       event.preventDefault();
@@ -1967,7 +1996,7 @@ function LayoutCanvas({ layout, cameras, onChange, onError }) {
     <div className="layout-canvas-wrap">
       <div
         ref={gridRef}
-        className="live-layout-grid layout-editor-grid editable"
+        className={`live-layout-grid layout-editor-grid${editable ? ' editable' : ''}`}
         style={{
           '--layout-columns': cols,
           gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
@@ -1985,7 +2014,7 @@ function LayoutCanvas({ layout, cameras, onChange, onError }) {
               key={itemID(it)}
               className={'video-tile live-layout-tile layout-editor-tile' + (selectedId === itemID(it) ? ' selected' : '')}
               style={{ gridColumn: `${(it.x || 0) + 1} / span ${Math.max(1, it.width || 1)}`, gridRow: `${(it.y || 0) + 1} / span ${Math.max(1, it.height || 1)}` }}
-              onClick={(e) => { e.stopPropagation(); setSelectedId(itemID(it)); }}
+              onClick={(e) => { e.stopPropagation(); if (editable) setSelectedId(itemID(it)); }}
             >
               <div className="live-tile-bar" onMouseDown={(e) => startDrag(it, 'move', e)}>
                 <strong>{cam ? cam.name : shortID(it.camera_id)}</strong>
@@ -1994,7 +2023,7 @@ function LayoutCanvas({ layout, cameras, onChange, onError }) {
               <div className="live-tile-video layout-editor-tile-body">
                 <p>{cam ? (cam.location || cam.camera_group || shortID(cam.id)) : 'Camera unavailable'}</p>
               </div>
-              {selectedId === itemID(it) && (
+              {editable && selectedId === itemID(it) && (
                 <>
                   {['nw','n','ne','e','se','s','sw','w'].map((h) => (
                     <span
@@ -2009,7 +2038,7 @@ function LayoutCanvas({ layout, cameras, onChange, onError }) {
           );
         })}
       </div>
-      {selected && (
+      {editable && selected && (
         <div className="layout-tile-edit">
           <span>
             <strong>{tileCamera ? tileCamera.name : shortID(selected.camera_id)}</strong>
@@ -2019,7 +2048,7 @@ function LayoutCanvas({ layout, cameras, onChange, onError }) {
           <button type="button" className="danger" onClick={() => { if (window.confirm('Delete this tile?')) deleteItem(selected.id); }}>Delete</button>
         </div>
       )}
-      {pendingCell && (
+      {editable && pendingCell && (
         <div className="layout-add-popup">
           <div className="layout-add-card">
             <h3>Add camera at ({pendingCell.x}, {pendingCell.y})</h3>
@@ -2044,6 +2073,7 @@ function LayoutCanvas({ layout, cameras, onChange, onError }) {
 
 function LayoutsPage() {
   const { user } = useAuth();
+  const isMobileLayout = useIsMobileLayout();
   const [layouts, setLayouts] = useState([]);
   const [cameras, setCameras] = useState([]);
   const [form, setForm] = useState({ name: '', columns: 4 });
@@ -2101,11 +2131,12 @@ function LayoutsPage() {
   }
 
   const layout = activeLayout();
+  const canEditLayout = user.role === 'admin' && !isMobileLayout;
 
   return (
     <Panel title="Layouts">
       {errorMsg && <ErrorText message={errorMsg} />}
-      {user.role === 'admin' && (
+      {canEditLayout && (
         <FormGrid onSubmit={createLayout}>
           <input placeholder="New layout name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           <input type="number" min="1" max="32" placeholder="Columns" value={form.columns} onChange={(e) => setForm({ ...form, columns: e.target.value })} />
@@ -2122,7 +2153,7 @@ function LayoutsPage() {
               <option value="" disabled>Pick a layout…</option>
               {layouts.map((l) => <option key={l.id} value={l.id}>{l.name}{l.is_default ? ' (default)' : ''}</option>)}
             </select>
-            {layout && user.role === 'admin' && (
+            {layout && canEditLayout && (
               <>
                 <label className="check">Columns
                   <input
@@ -2147,13 +2178,16 @@ function LayoutsPage() {
           {layout && (
             <>
               <p className="muted layout-help">
-                Click an empty cell to add a camera. Drag a tile to move it. Drag a corner or edge handle (visible when the tile is selected) to resize. Edits save automatically.
+                {canEditLayout
+                  ? 'Click an empty cell to add a camera. Drag a tile to move it. Drag a corner or edge handle (visible when the tile is selected) to resize. Edits save automatically.'
+                  : 'Mobile view is read-only. Use a desktop screen to edit layout tiles.'}
               </p>
               <LayoutCanvas
                 layout={layout}
                 cameras={cameras}
                 onChange={onItemsChanged}
                 onError={setErrorMsg}
+                editable={canEditLayout}
               />
             </>
           )}
@@ -2165,6 +2199,7 @@ function LayoutsPage() {
 
 function LiveLayoutPage() {
   const { user } = useAuth();
+  const isMobileLayout = useIsMobileLayout();
   const [layouts, setLayouts] = useState([]);
   const [layoutId, setLayoutId] = useState('');
   const [result, setResult] = useState(null);
@@ -2231,11 +2266,11 @@ function LiveLayoutPage() {
       {actionError && <ErrorText message={actionError} />}
       {!layouts.length && !loading && <EmptyState title="No layouts" body="Create a layout to start streaming live video." />}
       {result && layout && (
-        <div className={user?.role === 'admin' ? 'live-layout-wrap' : undefined}>
+        <div className={user?.role === 'admin' && !isMobileLayout ? 'live-layout-wrap' : undefined}>
           <LiveLayoutGrid
             layout={layout}
             cameras={result?.cameras || []}
-            editable={user?.role === 'admin'}
+            editable={user?.role === 'admin' && !isMobileLayout}
             onError={setActionError}
             onChange={(updatedItems) => {
               setLayouts((prev) => prev.map((item) => (
@@ -2250,6 +2285,7 @@ function LiveLayoutPage() {
 }
 
 function PlaybackPage() {
+  const isMobileLayout = useIsMobileLayout();
   const [layouts, setLayouts] = useState([]);
   const [layoutId, setLayoutId] = useState('');
   const [selectedTime, setSelectedTime] = useState(() => new Date());
@@ -2382,6 +2418,7 @@ function PlaybackPage() {
           videoRefs={videoRefs}
           focusedCameraId={focusedCameraId}
           onFocusCamera={setFocusedCameraId}
+          simpleList={isMobileLayout}
           selectedTime={selectedTime}
           timeline={timeline}
           onSelectTime={(timestamp) => {
@@ -2450,7 +2487,7 @@ function PlaybackTimeline({ layout, cameras, timeline, selectedTime, resultLoade
   );
 }
 
-function PlaybackLayoutGrid({ layout, cameras, playing, videoRefs, focusedCameraId, onFocusCamera, selectedTime, timeline, onSelectTime, onTogglePlayback }) {
+function PlaybackLayoutGrid({ layout, cameras, playing, videoRefs, focusedCameraId, onFocusCamera, simpleList = false, selectedTime, timeline, onSelectTime, onTogglePlayback }) {
   const byCamera = new Map(cameras.map((camera) => [camera.camera_id, camera]));
   const tileRefs = React.useRef(new Map());
   const [fullscreenFallbackId, setFullscreenFallbackId] = useState('');
@@ -2464,7 +2501,7 @@ function PlaybackLayoutGrid({ layout, cameras, playing, videoRefs, focusedCamera
   }));
   const columns = Math.max(1, Number(layout?.settings?.columns) || Math.max(...items.map((item) => Number(item.x || 0) + Number(item.width || 1)), 1));
   const rows = Math.max(1, Math.max(...items.map((item) => Number(item.y || 0) + Number(item.height || 1)), 1));
-  const focusedItem = items.find((item) => item.camera_id === focusedCameraId);
+  const focusedItem = simpleList ? null : items.find((item) => item.camera_id === focusedCameraId);
   const visibleFocusedItem = focusedItem || null;
   const sideItems = visibleFocusedItem ? items.filter((item) => item.camera_id !== visibleFocusedItem.camera_id) : [];
 
@@ -2516,12 +2553,12 @@ function PlaybackLayoutGrid({ layout, cameras, playing, videoRefs, focusedCamera
             <span><PlaybackStatusBadge status={camera.status} /></span>
           </div>
           <div className="playback-tile-actions">
-            {!options.compact && (
+            {!simpleList && !options.compact && (
               <button type="button" onClick={() => (isFocused ? onFocusCamera('') : onFocusCamera(camera.camera_id))}>
                 {isFocused ? 'Exit focus' : 'Focus'}
               </button>
             )}
-            {options.compact && <button type="button" onClick={() => onFocusCamera(camera.camera_id)}>Focus</button>}
+            {!simpleList && options.compact && <button type="button" onClick={() => onFocusCamera(camera.camera_id)}>Focus</button>}
             {camera.status === 'ok' && (
               <button type="button" onClick={() => (isFullscreenFallback ? setFullscreenFallbackId('') : requestFullscreen(camera.camera_id))}>
                 {isFullscreenFallback ? 'Exit fullscreen' : 'Fullscreen'}
@@ -2573,9 +2610,12 @@ function PlaybackLayoutGrid({ layout, cameras, playing, videoRefs, focusedCamera
   }
 
   return (
-    <div className="layout-playback-grid" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gridAutoRows: 'minmax(180px, auto)' }}>
+    <div
+      className={'layout-playback-grid' + (simpleList ? ' simple-list' : '')}
+      style={simpleList ? undefined : { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gridAutoRows: 'minmax(180px, auto)' }}
+    >
       {items.map((item) => renderTile(item, {
-        style: {
+        style: simpleList ? undefined : {
           gridColumn: `${Number(item.x || 0) + 1} / span ${Math.max(Number(item.width || 1), 1)}`,
           gridRow: `${Number(item.y || 0) + 1} / span ${Math.max(Number(item.height || 1), 1)}`,
         },
@@ -3220,8 +3260,8 @@ function FormGrid({ children, onSubmit }) {
   return <form className="form-grid" onSubmit={onSubmit}>{children}</form>;
 }
 
-function Field({ label, help, children }) {
-  return <label className="field"><span>{label}</span>{children}{help && <small>{help}</small>}</label>;
+function Field({ label, help, children, className = '' }) {
+  return <label className={`field${className ? ` ${className}` : ''}`}><span>{label}</span>{children}{help && <small>{help}</small>}</label>;
 }
 
 function Toolbar({ children }) {

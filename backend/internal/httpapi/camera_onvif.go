@@ -112,9 +112,10 @@ func (s *Server) handleCameraONVIFImport(w http.ResponseWriter, r *http.Request)
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
-	recordingEnabled := false
-	if req.RecordingEnabled != nil {
-		recordingEnabled = *req.RecordingEnabled
+	recordingEnabled := defaultRecordingEnabled(req.RecordingEnabled, req.StorageLocationID)
+	if recordingEnabled && req.StorageLocationID == nil {
+		writeError(w, http.StatusBadRequest, "validation_error", "storage_location_id is required when recording is enabled", nil)
+		return
 	}
 	recordAudio := boolValue(req.RecordAudio, false)
 	streamEnabled := boolValue(req.StreamEnabled, true)

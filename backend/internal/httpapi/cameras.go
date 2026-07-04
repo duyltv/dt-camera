@@ -144,9 +144,10 @@ func (s *Server) createCamera(w http.ResponseWriter, r *http.Request) {
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
-	recordingEnabled := false
-	if req.RecordingEnabled != nil {
-		recordingEnabled = *req.RecordingEnabled
+	recordingEnabled := defaultRecordingEnabled(req.RecordingEnabled, req.StorageLocationID)
+	if recordingEnabled && req.StorageLocationID == nil {
+		writeError(w, http.StatusBadRequest, "validation_error", "storage_location_id is required when recording is enabled", nil)
+		return
 	}
 	recordAudio := boolValue(req.RecordAudio, false)
 	streamEnabled := boolValue(req.StreamEnabled, true)
@@ -320,6 +321,10 @@ func (s *Server) updateCamera(w http.ResponseWriter, r *http.Request, id string)
 	recordingEnabled := current.RecordingEnabled
 	if req.RecordingEnabled != nil {
 		recordingEnabled = *req.RecordingEnabled
+	}
+	if recordingEnabled && storageLocationID == nil {
+		writeError(w, http.StatusBadRequest, "validation_error", "storage_location_id is required when recording is enabled", nil)
+		return
 	}
 	recordAudio := current.RecordAudio
 	if req.RecordAudio != nil {
@@ -606,6 +611,13 @@ func boolValue(value *bool, fallback bool) bool {
 		return fallback
 	}
 	return *value
+}
+
+func defaultRecordingEnabled(value *bool, storageLocationID *string) bool {
+	if value != nil {
+		return *value
+	}
+	return storageLocationID != nil && strings.TrimSpace(*storageLocationID) != ""
 }
 
 func nullableInt64(value *int64) any {
