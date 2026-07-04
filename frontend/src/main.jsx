@@ -2137,44 +2137,54 @@ function LayoutsPage() {
     <Panel title="Layouts">
       {errorMsg && <ErrorText message={errorMsg} />}
       {canEditLayout && (
-        <FormGrid onSubmit={createLayout}>
-          <input placeholder="New layout name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-          <input type="number" min="1" max="32" placeholder="Columns" value={form.columns} onChange={(e) => setForm({ ...form, columns: e.target.value })} />
+        <form className="layout-create-form" onSubmit={createLayout}>
+          <div className="layout-form-heading">
+            <strong>Create Layout</strong>
+            <span>Set up a camera grid for Live and Playback review.</span>
+          </div>
+          <Field label="Layout name" help="Use a short name that operators can recognize quickly.">
+            <input placeholder="Main entrance" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          </Field>
+          <Field label="Grid columns" help="More columns allow finer tile placement on desktop screens.">
+            <input type="number" min="1" max="32" value={form.columns} onChange={(e) => setForm({ ...form, columns: e.target.value })} />
+          </Field>
           <button>Create layout</button>
-        </FormGrid>
+        </form>
       )}
       <State loading={loading} error={error} />
       {!layouts.length && !loading ? (
         <EmptyState title="No layouts" body={user.role === 'admin' ? 'Create a layout above to start adding camera tiles.' : 'No layouts have been shared with you yet.'} />
       ) : (
         <>
-          <Toolbar>
-            <select value={activeId || ''} onChange={(e) => setActiveId(e.target.value)}>
-              <option value="" disabled>Pick a layout…</option>
-              {layouts.map((l) => <option key={l.id} value={l.id}>{l.name}{l.is_default ? ' (default)' : ''}</option>)}
-            </select>
+          <div className="layout-toolbar">
+            <Field label="Active layout" className="layout-active-field">
+              <select value={activeId || ''} onChange={(e) => setActiveId(e.target.value)}>
+                <option value="" disabled>Pick a layout...</option>
+                {layouts.map((l) => <option key={l.id} value={l.id}>{l.name}{l.is_default ? ' (default)' : ''}</option>)}
+              </select>
+            </Field>
             {layout && canEditLayout && (
-              <>
-                <label className="check">Columns
+              <div className="layout-toolbar-actions">
+                <Field label="Columns" className="layout-columns-field">
                   <input
-                    type="number" min="1" max="32" style={{ width: '64px' }}
+                    type="number" min="1" max="32"
                     defaultValue={layout.settings?.columns || 4}
                     onBlur={(e) => {
                       const v = Number(e.target.value);
                       if (v && v !== (layout.settings?.columns || 4)) patchColumns(layout.id, v);
                     }}
                   />
-                </label>
+                </Field>
                 {!layout.is_default && <button type="button" onClick={() => setDefault(layout.id)}>Make default</button>}
                 <button type="button" className="danger" onClick={() => deleteLayout(layout.id)}>Delete layout</button>
-              </>
+              </div>
             )}
             {layout && (
-              <span className="muted" style={{ marginLeft: 'auto' }}>
+              <span className="layout-tile-count">
                 {(layout.layout_items || []).length} tile{(layout.layout_items || []).length === 1 ? '' : 's'}
               </span>
             )}
-          </Toolbar>
+          </div>
           {layout && (
             <>
               <p className="muted layout-help">

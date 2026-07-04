@@ -2684,6 +2684,93 @@ video {
   margin: 4px 0 18px;
 }
 
+.layout-create-form {
+  align-items: end;
+  background: #f8fafc;
+  border: 1px solid #d9e1ec;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(280px, 1fr) minmax(140px, 0.45fr) auto;
+  margin-bottom: 18px;
+  padding: 16px;
+}
+
+.layout-form-heading {
+  align-self: center;
+  display: grid;
+  gap: 4px;
+  grid-column: 1 / -1;
+}
+
+.layout-form-heading strong {
+  color: #111827;
+  font-size: 15px;
+}
+
+.layout-form-heading span {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.layout-create-form button {
+  align-self: start;
+  margin-top: 22px;
+  min-height: 38px;
+  white-space: nowrap;
+}
+
+.layout-create-form .field {
+  align-self: stretch;
+  grid-template-rows: auto 38px minmax(34px, auto);
+}
+
+.layout-toolbar {
+  align-items: end;
+  background: #ffffff;
+  border: 1px solid #d9e1ec;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(260px, 1fr) auto minmax(82px, auto);
+  margin-bottom: 14px;
+  padding: 14px;
+}
+
+.layout-active-field select {
+  min-width: 260px;
+}
+
+.layout-toolbar-actions {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.layout-columns-field {
+  width: 92px;
+}
+
+.layout-toolbar-actions button {
+  min-height: 38px;
+  white-space: nowrap;
+}
+
+.layout-tile-count {
+  align-self: center;
+  background: #eef2f7;
+  border: 1px solid #dbe3ee;
+  border-radius: 999px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  justify-self: end;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
 .layout-canvas-wrap {
   margin: 12px 0;
   overflow-x: auto;
@@ -2794,6 +2881,26 @@ video {
 }
 
 @media (max-width: 760px) {
+  .layout-create-form,
+  .layout-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .layout-active-field select,
+  .layout-columns-field {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .layout-toolbar-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .layout-tile-count {
+    justify-self: start;
+  }
+
   .playback-toolbar {
     grid-template-columns: 1fr;
   }
