@@ -21,18 +21,21 @@ import (
 )
 
 type onvifCameraRequest struct {
-	XAddr             string  `json:"xaddr"`
-	Name              string  `json:"name,omitempty"`
-	Username          string  `json:"username,omitempty"`
-	Password          string  `json:"password,omitempty"`
-	StorageLocationID *string `json:"storage_location_id,omitempty"`
-	Enabled           *bool   `json:"enabled,omitempty"`
-	RecordingEnabled  *bool   `json:"recording_enabled,omitempty"`
-	RecordAudio       *bool   `json:"record_audio,omitempty"`
-	StreamEnabled     *bool   `json:"stream_enabled,omitempty"`
-	StreamAudio       *bool   `json:"stream_audio,omitempty"`
-	RetentionDays     *int    `json:"retention_days,omitempty"`
-	MaxStorageBytes   *int64  `json:"max_storage_bytes,omitempty"`
+	XAddr                    string   `json:"xaddr"`
+	Name                     string   `json:"name,omitempty"`
+	Username                 string   `json:"username,omitempty"`
+	Password                 string   `json:"password,omitempty"`
+	StorageLocationID        *string  `json:"storage_location_id,omitempty"`
+	Enabled                  *bool    `json:"enabled,omitempty"`
+	RecordingEnabled         *bool    `json:"recording_enabled,omitempty"`
+	RecordAudio              *bool    `json:"record_audio,omitempty"`
+	StreamEnabled            *bool    `json:"stream_enabled,omitempty"`
+	StreamAudio              *bool    `json:"stream_audio,omitempty"`
+	MotionDetectionEnabled   *bool    `json:"motion_detection_enabled,omitempty"`
+	MotionSensitivity        *float64 `json:"motion_sensitivity,omitempty"`
+	MotionMinDurationSeconds *int     `json:"motion_min_duration_seconds,omitempty"`
+	RetentionDays            *int     `json:"retention_days,omitempty"`
+	MaxStorageBytes          *int64   `json:"max_storage_bytes,omitempty"`
 }
 
 type onvifStreamInfo struct {
@@ -120,13 +123,38 @@ func (s *Server) handleCameraONVIFImport(w http.ResponseWriter, r *http.Request)
 	recordAudio := boolValue(req.RecordAudio, false)
 	streamEnabled := boolValue(req.StreamEnabled, true)
 	streamAudio := boolValue(req.StreamAudio, false)
+	motionDetectionEnabled := boolValue(req.MotionDetectionEnabled, false)
+	motionSensitivity := 0.35
+	if req.MotionSensitivity != nil {
+		motionSensitivity = *req.MotionSensitivity
+	}
+	if motionSensitivity < 0.01 || motionSensitivity > 1 {
+		writeError(w, http.StatusBadRequest, "validation_error", "motion_sensitivity must be between 0.01 and 1.0", nil)
+		return
+	}
+	motionMinDurationSeconds := 1
+	if req.MotionMinDurationSeconds != nil {
+		motionMinDurationSeconds = *req.MotionMinDurationSeconds
+	}
+	if motionMinDurationSeconds < 0 {
+		writeError(w, http.StatusBadRequest, "validation_error", "motion_min_duration_seconds must be greater than or equal to zero", nil)
+		return
+	}
 	location := hostFromHTTPURL(req.XAddr)
 	cameraGroup := "Discovered"
 	row := s.db.QueryRowContext(r.Context(), `
-		INSERT INTO cameras (name, rtsp_url, storage_location_id, location, camera_group, is_enabled, recording_enabled, record_audio, stream_enabled, stream_audio, retention_days, max_storage_bytes)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		RETURNING id, storage_location_id, name, location, camera_group, is_enabled, recording_enabled, record_audio, stream_enabled, stream_audio, retention_days, max_storage_bytes, created_at, updated_at
-	`, name, stream.RTSPURL, nullableString(req.StorageLocationID), nullableString(&location), nullableString(&cameraGroup), enabled, recordingEnabled, recordAudio, streamEnabled, streamAudio, retentionDays, nullableInt64(req.MaxStorageBytes))
+		INSERT INTO cameras (
+			name, rtsp_url, storage_location_id, location, camera_group, is_enabled,
+			recording_enabled, record_audio, stream_enabled, stream_audio,
+			motion_detection_enabled, motion_sensitivity, motion_min_duration_seconds,
+			retention_days, max_storage_bytes
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		RETURNING id, storage_location_id, name, location, camera_group, is_enabled,
+			recording_enabled, record_audio, stream_enabled, stream_audio,
+			motion_detection_enabled, motion_sensitivity, motion_min_duration_seconds,
+			retention_days, max_storage_bytes, created_at, updated_at
+	`, name, stream.RTSPURL, nullableString(req.StorageLocationID), nullableString(&location), nullableString(&cameraGroup), enabled, recordingEnabled, recordAudio, streamEnabled, streamAudio, motionDetectionEnabled, motionSensitivity, motionMinDurationSeconds, retentionDays, nullableInt64(req.MaxStorageBytes))
 	camera, err := scanCamera(row)
 	if err != nil {
 		if err == sql.ErrNoRows {

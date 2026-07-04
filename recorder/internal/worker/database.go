@@ -17,6 +17,9 @@ func fetchEnabledCameras(ctx context.Context, db *sql.DB) ([]Camera, error) {
 			c.storage_location_id,
 			s.container_path,
 			c.record_audio,
+			c.motion_detection_enabled,
+			c.motion_sensitivity,
+			c.motion_min_duration_seconds,
 			c.retention_days,
 			c.max_storage_bytes,
 			c.updated_at
@@ -43,6 +46,9 @@ func fetchEnabledCameras(ctx context.Context, db *sql.DB) ([]Camera, error) {
 			&camera.StorageLocationID,
 			&camera.StoragePath,
 			&camera.RecordAudio,
+			&camera.MotionDetectionEnabled,
+			&camera.MotionSensitivity,
+			&camera.MotionMinDurationSeconds,
 			&camera.RetentionDays,
 			&camera.MaxStorageBytes,
 			&camera.UpdatedAt,
@@ -76,7 +82,13 @@ func upsertHeartbeat(ctx context.Context, db *sql.DB, workerID, version, status 
 }
 
 func insertSegment(ctx context.Context, db *sql.DB, segment SegmentMetadata) error {
-	_, err := db.ExecContext(ctx, `
+	_, err := insertSegmentWithID(ctx, db, segment)
+	return err
+}
+
+func insertSegmentWithID(ctx context.Context, db *sql.DB, segment SegmentMetadata) (string, error) {
+	var id string
+	err := db.QueryRowContext(ctx, `
 		INSERT INTO recording_segments (
 			camera_id,
 			storage_location_id,
@@ -92,11 +104,15 @@ func insertSegment(ctx context.Context, db *sql.DB, segment SegmentMetadata) err
 		WHERE NOT EXISTS (
 			SELECT 1 FROM recording_segments WHERE file_path = $3
 		)
-	`, segment.CameraID, segment.StorageLocationID, segment.FilePath, segment.StartTime, segment.EndTime, segment.DurationSeconds, segment.SizeBytes, segment.Format, segment.Status)
-	if err != nil {
-		return fmt.Errorf("insert segment metadata: %w", err)
+		RETURNING id
+	`, segment.CameraID, segment.StorageLocationID, segment.FilePath, segment.StartTime, segment.EndTime, segment.DurationSeconds, segment.SizeBytes, segment.Format, segment.Status).Scan(&id)
+	if err == sql.ErrNoRows {
+		err = db.QueryRowContext(ctx, `SELECT id FROM recording_segments WHERE file_path = $1`, segment.FilePath).Scan(&id)
 	}
-	return nil
+	if err != nil {
+		return "", fmt.Errorf("insert segment metadata: %w", err)
+	}
+	return id, nil
 }
 
 func insertSystemEvent(ctx context.Context, db *sql.DB, eventType, entityType string, entityID *string, severity, message string, metadata map[string]any) error {
@@ -137,6 +153,176 @@ func upsertRecorderJob(ctx context.Context, db *sql.DB, workerID string, camera 
 		return fmt.Errorf("upsert recorder job: %w", err)
 	}
 	return nil
+}
+
+func insertMotionEvent(ctx context.Context, db *sql.DB, event MotionEvent) (string, error) {
+	return insertMotionEventWithMetadata(ctx, db, event, nil)
+}
+
+func insertMotionEventWithMetadata(ctx context.Context, db *sql.DB, event MotionEvent, metadata map[string]any) (string, error) {
+	var id string
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	payload, err := json.Marshal(metadata)
+	if err != nil {
+		payload = []byte(`{}`)
+	}
+	_, err = db.ExecContext(ctx, `
+		UPDATE motion_events
+		SET status = 'suppressed'
+		WHERE camera_id = $1
+			AND ($2::uuid IS NULL OR recording_segment_id = $2::uuid)
+			AND abs(extract(epoch from (occurred_at - $3::timestamptz))) < 1
+	`, event.CameraID, nullableString(&event.RecordingSegmentID), event.OccurredAt)
+	if err != nil {
+		return "", fmt.Errorf("dedupe motion event: %w", err)
+	}
+	err = db.QueryRowContext(ctx, `
+		INSERT INTO motion_events (
+			camera_id, recording_segment_id, occurred_at, score, image_path, video_path, status, metadata
+		)
+		VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), 'detected', $7::jsonb)
+		RETURNING id
+	`, event.CameraID, nullableString(&event.RecordingSegmentID), event.OccurredAt, event.Score, event.ImagePath, event.VideoPath, string(payload)).Scan(&id)
+	if err != nil {
+		return "", fmt.Errorf("insert motion event: %w", err)
+	}
+	return id, nil
+}
+
+func updateMotionEventEvidence(ctx context.Context, db *sql.DB, id, imagePath, videoPath string) error {
+	_, err := db.ExecContext(ctx, `
+		UPDATE motion_events
+		SET image_path = NULLIF($2, ''), video_path = NULLIF($3, '')
+		WHERE id = $1
+	`, id, imagePath, videoPath)
+	if err != nil {
+		return fmt.Errorf("update motion event evidence: %w", err)
+	}
+	return nil
+}
+
+func fetchNotificationRules(ctx context.Context, db *sql.DB, eventType, cameraID string) ([]NotificationRule, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT
+			r.id,
+			r.name,
+			r.event_type,
+			r.notification_channel_id,
+			r.cooldown_seconds,
+			r.attach_image,
+			r.attach_video,
+			r.pre_event_seconds,
+			r.post_event_seconds,
+			r.video_fps,
+			ch.id,
+			ch.name,
+			ch.method,
+			ch.enabled,
+			ch.config
+		FROM notification_rules r
+		JOIN notification_channels ch ON ch.id = r.notification_channel_id
+		WHERE r.enabled = TRUE
+			AND ch.enabled = TRUE
+			AND r.event_type = $1
+			AND (r.camera_id IS NULL OR r.camera_id = $2)
+		ORDER BY r.name
+	`, eventType, cameraID)
+	if err != nil {
+		return nil, fmt.Errorf("query notification rules: %w", err)
+	}
+	defer rows.Close()
+
+	var rules []NotificationRule
+	for rows.Next() {
+		var rule NotificationRule
+		var rawConfig []byte
+		if err := rows.Scan(
+			&rule.ID,
+			&rule.Name,
+			&rule.EventType,
+			&rule.NotificationChannelID,
+			&rule.CooldownSeconds,
+			&rule.AttachImage,
+			&rule.AttachVideo,
+			&rule.PreEventSeconds,
+			&rule.PostEventSeconds,
+			&rule.VideoFPS,
+			&rule.Channel.ID,
+			&rule.Channel.Name,
+			&rule.Channel.Method,
+			&rule.Channel.Enabled,
+			&rawConfig,
+		); err != nil {
+			return nil, fmt.Errorf("scan notification rule: %w", err)
+		}
+		rule.Channel.Config = parseStringConfig(rawConfig)
+		rules = append(rules, rule)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate notification rules: %w", err)
+	}
+	return rules, nil
+}
+
+func shouldSendNotification(ctx context.Context, db *sql.DB, rule NotificationRule, cameraID string, now time.Time) (bool, error) {
+	if rule.CooldownSeconds <= 0 {
+		return true, nil
+	}
+	var last sql.NullTime
+	if err := db.QueryRowContext(ctx, `
+		SELECT max(created_at)
+		FROM notification_deliveries
+		WHERE notification_rule_id = $1
+			AND camera_id = $2
+			AND status IN ('sent', 'pending')
+	`, rule.ID, cameraID).Scan(&last); err != nil {
+		return false, fmt.Errorf("query notification cooldown: %w", err)
+	}
+	if !last.Valid {
+		return true, nil
+	}
+	return now.Sub(last.Time) >= time.Duration(rule.CooldownSeconds)*time.Second, nil
+}
+
+func insertNotificationDelivery(ctx context.Context, db *sql.DB, rule NotificationRule, eventType, entityType, entityID, cameraID, status, errText string, sentAt *time.Time) error {
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO notification_deliveries (
+			notification_rule_id, notification_channel_id, event_type, entity_type,
+			entity_id, camera_id, status, error, sent_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9)
+	`, rule.ID, rule.NotificationChannelID, eventType, entityType, nullableString(&entityID), nullableString(&cameraID), status, errText, nullableTime(sentAt))
+	if err != nil {
+		return fmt.Errorf("insert notification delivery: %w", err)
+	}
+	return nil
+}
+
+func updateMotionEventStatus(ctx context.Context, db *sql.DB, id, status string) error {
+	_, err := db.ExecContext(ctx, `UPDATE motion_events SET status = $2 WHERE id = $1`, id, status)
+	if err != nil {
+		return fmt.Errorf("update motion event status: %w", err)
+	}
+	return nil
+}
+
+func parseStringConfig(raw []byte) map[string]string {
+	values := map[string]any{}
+	out := map[string]string{}
+	if len(raw) == 0 {
+		return out
+	}
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return out
+	}
+	for key, value := range values {
+		if s, ok := value.(string); ok {
+			out[key] = s
+		}
+	}
+	return out
 }
 
 func nullableString(value *string) any {

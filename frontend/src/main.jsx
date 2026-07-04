@@ -7,6 +7,7 @@ import {
   Outlet,
   Route,
   Routes,
+  useLocation,
   useNavigate,
 } from 'react-router-dom';
 import { createRoot } from 'react-dom/client';
@@ -113,6 +114,12 @@ function AdminOnly({ children }) {
 function Shell() {
   const { user, setUser } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [location.pathname]);
 
   async function logout() {
     await api('/api/auth/logout', { method: 'POST', body: '{}' });
@@ -121,8 +128,13 @@ function Shell() {
   }
 
   return (
-    <div className="shell">
-      <aside className="sidebar">
+    <div className={`shell${menuOpen ? ' mobile-menu-open' : ''}`}>
+      <aside
+        className={`sidebar${menuOpen ? ' open' : ''}`}
+        onClick={(event) => {
+          if (event.target.closest?.('a')) setMenuOpen(false);
+        }}
+      >
         <h1>DT Camera</h1>
         <p className="muted sidebar-tag">Signed in as {user.display_name}</p>
         <nav className="nav-group">
@@ -146,8 +158,25 @@ function Shell() {
           </nav>
         )}
       </aside>
+      <button
+        className="mobile-menu-backdrop"
+        type="button"
+        aria-label="Close navigation menu"
+        onClick={() => setMenuOpen(false)}
+      />
       <main className="content">
         <header className="topbar">
+          <button
+            className="mobile-menu-button"
+            type="button"
+            aria-label="Open navigation menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((value) => !value)}
+          >
+            <span />
+            <span />
+            <span />
+          </button>
           <div>
             <strong>{user.display_name}</strong>
             <span>
@@ -861,6 +890,9 @@ function CamerasPage() {
       record_audio: values.record_audio,
       stream_enabled: values.stream_enabled,
       stream_audio: values.stream_audio,
+      motion_detection_enabled: values.motion_detection_enabled,
+      motion_sensitivity: Number(values.motion_sensitivity),
+      motion_min_duration_seconds: Number(values.motion_min_duration_seconds),
       retention_days: Number(values.retention_days),
       max_storage_bytes: values.max_storage_bytes ? Number(values.max_storage_bytes) : null,
     };
@@ -1016,6 +1048,9 @@ function CamerasPage() {
       record_audio: values.record_audio,
       stream_enabled: values.stream_enabled,
       stream_audio: values.stream_audio,
+      motion_detection_enabled: values.motion_detection_enabled,
+      motion_sensitivity: Number(values.motion_sensitivity),
+      motion_min_duration_seconds: Number(values.motion_min_duration_seconds),
     };
   }
 
@@ -1261,6 +1296,7 @@ function CamerasPage() {
                     <StatusBadge kind={camera.enabled ? 'ok' : 'muted'} text={camera.enabled ? 'enabled' : 'disabled'} />
                     <StatusBadge kind={camera.recording_enabled ? 'ok' : 'warning'} text={camera.recording_enabled ? 'recording' : 'not recording'} />
                     <StatusBadge kind={camera.stream_enabled ? 'ok' : 'muted'} text={camera.stream_enabled ? 'streaming' : 'stream off'} />
+                    <StatusBadge kind={camera.motion_detection_enabled ? 'ok' : 'muted'} text={camera.motion_detection_enabled ? 'motion on' : 'motion off'} />
                   </div>
                 </div>
                 <div className="camera-preview-panel">
@@ -1297,6 +1333,7 @@ function CamerasPage() {
                       <div><dt>Storage</dt><dd>{storageName(camera.storage_location_id)}</dd></div>
                       <div><dt>Retention</dt><dd>{camera.retention_days} days</dd></div>
                       <div><dt>Audio</dt><dd>{camera.record_audio || camera.stream_audio ? `${camera.record_audio ? 'Record' : ''}${camera.record_audio && camera.stream_audio ? ' + ' : ''}${camera.stream_audio ? 'Live' : ''}` : 'Off'}</dd></div>
+                      <div><dt>Motion detector</dt><dd>{camera.motion_detection_enabled ? `On · ${Number(camera.motion_sensitivity || 0.35).toFixed(2)} sensitivity` : 'Off'}</dd></div>
                       <div><dt>Max storage</dt><dd>{camera.max_storage_bytes ? formatBytes(camera.max_storage_bytes) : 'No cap'}</dd></div>
                       <div><dt>Updated</dt><dd>{formatDateTime(camera.updated_at)}</dd></div>
                     </dl>
@@ -1314,6 +1351,12 @@ function CamerasPage() {
                         onClick={() => quickPatch(camera, { enabled: !camera.enabled })}
                       >
                         {camera.enabled ? 'Disable camera' : 'Enable camera'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => quickPatch(camera, { motion_detection_enabled: !camera.motion_detection_enabled })}
+                      >
+                        {camera.motion_detection_enabled ? 'Disable motion' : 'Enable motion'}
                       </button>
                     </div>
                   </>
@@ -1341,6 +1384,9 @@ function newCameraForm() {
     record_audio: false,
     stream_enabled: true,
     stream_audio: false,
+    motion_detection_enabled: false,
+    motion_sensitivity: 0.35,
+    motion_min_duration_seconds: 1,
     retention_days: 30,
     max_storage_bytes: '',
   };
@@ -1375,6 +1421,9 @@ function newONVIFImportForm(device, storageLocations = []) {
     record_audio: false,
     stream_enabled: true,
     stream_audio: false,
+    motion_detection_enabled: false,
+    motion_sensitivity: 0.35,
+    motion_min_duration_seconds: 1,
   };
 }
 
@@ -1416,6 +1465,7 @@ function ONVIFImportForm({ device, form, storage, busy, message, previewUrl, onC
         <label className="switch-row"><input type="checkbox" checked={form.stream_enabled} onChange={(e) => onChange({ stream_enabled: e.target.checked })} /> Stream video</label>
         <label className="switch-row"><input type="checkbox" checked={form.stream_audio} onChange={(e) => onChange({ stream_audio: e.target.checked })} /> Stream audio</label>
       </div>
+      <DetectorSettingsPanel form={form} onChange={onChange} compact />
       <div className="form-actions">
         <button type="button" disabled={Boolean(busy)} onClick={onTest}>{busy === 'test' ? 'Testing...' : 'Test'}</button>
         <button type="button" disabled={Boolean(busy)} onClick={onPreview}>{busy === 'preview' ? 'Loading preview...' : 'Preview'}</button>
@@ -1482,9 +1532,76 @@ function cameraToForm(camera) {
     record_audio: Boolean(camera.record_audio),
     stream_enabled: camera.stream_enabled !== false,
     stream_audio: Boolean(camera.stream_audio),
+    motion_detection_enabled: Boolean(camera.motion_detection_enabled),
+    motion_sensitivity: camera.motion_sensitivity || 0.35,
+    motion_min_duration_seconds: camera.motion_min_duration_seconds ?? 1,
     retention_days: camera.retention_days || 30,
     max_storage_bytes: camera.max_storage_bytes || '',
   };
+}
+
+function DetectorSettingsPanel({ form, onChange, compact = false }) {
+  const enabled = Boolean(form.motion_detection_enabled);
+  const sensitivity = Number(form.motion_sensitivity || 0.35);
+  const minSeconds = Number(form.motion_min_duration_seconds ?? 1);
+  return (
+    <div className={compact ? 'detector-settings compact' : 'detector-settings'}>
+      <div className={enabled ? 'detector-card active' : 'detector-card'}>
+        <div className="detector-card-header">
+          <div>
+            <strong>Motion detector</strong>
+            <span>{enabled ? 'Live detector active for this camera' : 'Live detector disabled for this camera'}</span>
+          </div>
+          <StatusBadge kind={enabled ? 'ok' : 'muted'} text={enabled ? 'on' : 'off'} />
+        </div>
+        <label className="detector-toggle">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(event) => onChange({ motion_detection_enabled: event.target.checked })}
+          />
+          <span>
+            <strong>Enable motion alerts</strong>
+            <small>Runs a low-FPS live detector and uses notification rules when motion is found.</small>
+          </span>
+        </label>
+        <div className="detector-input-grid">
+          <Field label="Sensitivity" help="Lower values catch smaller changes.">
+            <div className="detector-range-row">
+              <input
+                type="range"
+                min="0.01"
+                max="1"
+                step="0.01"
+                value={sensitivity}
+                onChange={(event) => onChange({ motion_sensitivity: event.target.value })}
+              />
+              <input
+                className="detector-number"
+                type="number"
+                min="0.01"
+                max="1"
+                step="0.01"
+                value={form.motion_sensitivity}
+                onChange={(event) => onChange({ motion_sensitivity: event.target.value })}
+              />
+            </div>
+          </Field>
+          <Field label="Minimum duration" help="Ignore brief changes below this length.">
+            <div className="detector-duration-row">
+              <input
+                type="number"
+                min="0"
+                value={form.motion_min_duration_seconds}
+                onChange={(event) => onChange({ motion_min_duration_seconds: event.target.value })}
+              />
+              <span>{minSeconds === 1 ? 'second' : 'seconds'}</span>
+            </div>
+          </Field>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function CameraForm({ form, setForm, storage, onSubmit, submitText, rtspRequired = false, secondaryAction }) {
@@ -1561,6 +1678,14 @@ function CameraForm({ form, setForm, storage, onSubmit, submitText, rtspRequired
             <span><strong>Stream audio</strong><small>Include camera audio in HLS live streams when available.</small></span>
           </label>
         </div>
+      </div>
+
+      <div className="camera-form-section camera-form-section-detectors">
+        <div className="camera-form-section-heading">
+          <strong>Detection</strong>
+          <span>Manage per-camera detectors that can trigger notifications.</span>
+        </div>
+        <DetectorSettingsPanel form={form} onChange={(patch) => setForm({ ...form, ...patch })} />
       </div>
       <div className="form-actions">
         <button>{submitText}</button>
@@ -2256,10 +2381,11 @@ function LiveLayoutPage() {
   }, [layoutId, autoOpenedId, opening, result]);
 
   useEffect(() => {
-    if (!layoutId || !result?.cameras?.some((camera) => camera.status === 'starting')) return undefined;
+    if (!layoutId || !result) return undefined;
+    const delay = result?.cameras?.some((camera) => camera.status === 'starting' || camera.active_event) ? 1500 : 3000;
     const timer = window.setTimeout(() => {
       loadLive(layoutId, { silent: true });
-    }, 2000);
+    }, delay);
     return () => window.clearTimeout(timer);
   }, [layoutId, result]);
 
@@ -2522,6 +2648,14 @@ function PlaybackTimeline({ layout, cameras, timeline, selectedTime, resultLoade
                     style={rangeStyle(range.start_time, range.end_time, start, end)}
                   />
                 ))}
+                {(row.events || []).map((event, index) => (
+                  <span
+                    className="timeline-event timeline-event-motion"
+                    key={`${event.id || event.start_time}-${index}`}
+                    style={rangeStyle(event.start_time, event.end_time, start, end)}
+                    title={`Motion event · ${formatDateTime(event.start_time)} · score ${Number(event.score || 0).toFixed(2)}`}
+                  />
+                ))}
                 <span className="timeline-playhead" style={{ left: `${playheadLeft}%` }} />
               </button>
             </div>
@@ -2692,6 +2826,13 @@ function PlaybackFullscreenControls({ cameraID, playing, selectedTime, timeline,
               className="timeline-range"
               key={`${range.start_time}-${index}`}
               style={rangeStyle(range.start_time, range.end_time, start, end)}
+            />
+          ))}
+          {(availability?.events || []).map((event, index) => (
+            <span
+              className="timeline-event timeline-event-motion"
+              key={`${event.id || event.start_time}-${index}`}
+              style={rangeStyle(event.start_time, event.end_time, start, end)}
             />
           ))}
           <span className="timeline-playhead" style={{ left: `${playheadLeft}%` }} />
@@ -2943,10 +3084,11 @@ function LiveLayoutGrid({ layout, cameras, editable, onChange, onError }) {
       {items.map((item) => {
         const id = itemID(item);
         const camera = byCamera.get(item.camera_id) || { camera_id: item.camera_id, status: 'stream_unavailable' };
+        const hasActiveEvent = Boolean(camera.active_event);
         return (
           <section
             key={id}
-            className={'video-tile live-layout-tile' + (selectedId === id ? ' selected' : '')}
+            className={'video-tile live-layout-tile' + (selectedId === id ? ' selected' : '') + (hasActiveEvent ? ' event-active' : '')}
             style={{
               gridColumn: `${Number(item.x || 0) + 1} / span ${Math.max(1, Number(item.width || 1))}`,
               gridRow: `${Number(item.y || 0) + 1} / span ${Math.max(1, Number(item.height || 1))}`,
@@ -2955,7 +3097,10 @@ function LiveLayoutGrid({ layout, cameras, editable, onChange, onError }) {
           >
             <div className="live-tile-bar" onMouseDown={(event) => startDrag(item, 'move', event)}>
               <strong>{camera.camera_name || shortID(camera.camera_id)}</strong>
-              <span><LiveStatusBadge status={camera.status} /></span>
+              <span>
+                {hasActiveEvent && <StatusBadge kind="warning" text="motion" />}
+                <LiveStatusBadge status={camera.status} />
+              </span>
             </div>
             <div className="live-tile-video">
               {camera.status === 'ok' && <VideoPlayer src={camera.hls_url} autoPlay />}

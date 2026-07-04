@@ -215,6 +215,86 @@ curl -b cookies.txt -X PUT http://localhost:8080/api/users/USER_ID/camera-permis
   -d '{"can_view_live":true,"can_view_playback":true}'
 ```
 
+## Motion Detection And Telegram Notifications
+
+Motion detection runs live inside each recorder camera job. The recorder keeps
+a low-FPS rolling frame buffer, detects motion as frames arrive, waits for the
+configured post-event window, then creates evidence next to the camera
+recordings and uses reusable notification rules to deliver the event.
+
+Evidence files are stored under:
+
+```text
+/recordings/{camera_id}/events/YYYY/MM/DD/
+```
+
+Recording segment length is controlled separately by
+`RECORDER_SEGMENT_SECONDS` and defaults to 60 seconds. Motion alerts do not wait
+for a recording segment to finish.
+
+For Telegram, create a bot with BotFather and get the target chat ID. Then log
+in as admin and create one notification channel:
+
+```sh
+curl -b cookies.txt -X POST http://127.0.0.1:8088/api/notification-channels \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Home Telegram",
+    "method": "telegram",
+    "enabled": true,
+    "config": {
+      "bot_token": "123456:telegram-bot-token",
+      "chat_id": "123456789"
+    }
+  }'
+```
+
+API responses redact `config.bot_token`; the recorder reads the raw token
+directly from PostgreSQL.
+
+Create a reusable rule for motion events. Set `camera_id` to limit it to one
+camera, or omit `camera_id` to apply it to every camera.
+
+```sh
+curl -b cookies.txt -X POST http://127.0.0.1:8088/api/notification-rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Motion to Telegram",
+    "event_type": "motion_detected",
+    "notification_channel_id": "NOTIFICATION_CHANNEL_ID",
+    "cooldown_seconds": 300,
+    "attach_image": true,
+    "attach_video": true,
+    "pre_event_seconds": 7,
+    "post_event_seconds": 3,
+    "video_fps": 4
+  }'
+```
+
+Enable motion detection on a camera:
+
+```sh
+curl -b cookies.txt -X PATCH http://127.0.0.1:8088/api/cameras/CAMERA_ID \
+  -H "Content-Type: application/json" \
+  -d '{
+    "motion_detection_enabled": true,
+    "motion_sensitivity": 0.35,
+    "motion_min_duration_seconds": 1
+  }'
+```
+
+Useful verification commands:
+
+```sh
+docker compose logs -f recorder
+docker compose exec postgres psql -U dt_camera -d dt_camera -c "SELECT camera_id, occurred_at, score, status, image_path, video_path FROM motion_events ORDER BY occurred_at DESC LIMIT 10;"
+docker compose exec postgres psql -U dt_camera -d dt_camera -c "SELECT event_type, status, camera_id, sent_at, error FROM notification_deliveries ORDER BY created_at DESC LIMIT 10;"
+```
+
+Notification rules are intentionally generic: the same table supports
+`motion_detected`, `human_detected`, and `classification`, so later detector
+types can reuse Telegram or any future notification method.
+
 Admin revokes camera permissions:
 
 ```sh

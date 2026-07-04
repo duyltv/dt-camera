@@ -12,18 +12,28 @@ import (
 )
 
 type liveStreamResponse struct {
-	CameraID   string `json:"camera_id"`
-	CameraName string `json:"camera_name,omitempty"`
-	Status     string `json:"status"`
-	HLSURL     string `json:"hls_url,omitempty"`
+	CameraID    string             `json:"camera_id"`
+	CameraName  string             `json:"camera_name,omitempty"`
+	Status      string             `json:"status"`
+	HLSURL      string             `json:"hls_url,omitempty"`
+	ActiveEvent *activeEventMarker `json:"active_event,omitempty"`
 }
 
 type layoutLiveCameraResponse struct {
-	CameraID   string                      `json:"camera_id"`
-	CameraName string                      `json:"camera_name,omitempty"`
-	Status     string                      `json:"status"`
-	HLSURL     string                      `json:"hls_url,omitempty"`
-	LayoutItem *layoutItemPositionResponse `json:"layout_item,omitempty"`
+	CameraID    string                      `json:"camera_id"`
+	CameraName  string                      `json:"camera_name,omitempty"`
+	Status      string                      `json:"status"`
+	HLSURL      string                      `json:"hls_url,omitempty"`
+	ActiveEvent *activeEventMarker          `json:"active_event,omitempty"`
+	LayoutItem  *layoutItemPositionResponse `json:"layout_item,omitempty"`
+}
+
+type activeEventMarker struct {
+	ID          string    `json:"id"`
+	EventType   string    `json:"event_type"`
+	StartedAt   time.Time `json:"started_at"`
+	ActiveUntil time.Time `json:"active_until"`
+	Score       float64   `json:"score"`
 }
 
 func (s *Server) handleLiveCameraByID(w http.ResponseWriter, r *http.Request) {
@@ -74,11 +84,12 @@ func (s *Server) handleLiveLayoutByID(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		cameras = append(cameras, layoutLiveCameraResponse{
-			CameraID:   target.CameraID,
-			CameraName: info.CameraName,
-			Status:     info.Status,
-			HLSURL:     info.HLSURL,
-			LayoutItem: target.LayoutItem,
+			CameraID:    target.CameraID,
+			CameraName:  info.CameraName,
+			Status:      info.Status,
+			HLSURL:      info.HLSURL,
+			ActiveEvent: info.ActiveEvent,
+			LayoutItem:  target.LayoutItem,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"layout_id": parts[0], "cameras": cameras})
@@ -110,11 +121,30 @@ func (s *Server) liveInfoForCamera(r *http.Request, user userResponse, cameraID 
 	}
 	if !s.streams.streamReady(cameraID) {
 		if s.streams.waitReady(r.Context(), cameraID, 2*time.Second) {
-			return liveStreamResponse{CameraID: cameraID, CameraName: camera.Name, Status: "ok", HLSURL: hlsURL}
+			return liveStreamResponse{CameraID: cameraID, CameraName: camera.Name, Status: "ok", HLSURL: hlsURL, ActiveEvent: s.activeEventForCamera(r, cameraID)}
 		}
-		return liveStreamResponse{CameraID: cameraID, CameraName: camera.Name, Status: "starting", HLSURL: hlsURL}
+		return liveStreamResponse{CameraID: cameraID, CameraName: camera.Name, Status: "starting", HLSURL: hlsURL, ActiveEvent: s.activeEventForCamera(r, cameraID)}
 	}
-	return liveStreamResponse{CameraID: cameraID, CameraName: camera.Name, Status: "ok", HLSURL: hlsURL}
+	return liveStreamResponse{CameraID: cameraID, CameraName: camera.Name, Status: "ok", HLSURL: hlsURL, ActiveEvent: s.activeEventForCamera(r, cameraID)}
+}
+
+func (s *Server) activeEventForCamera(r *http.Request, cameraID string) *activeEventMarker {
+	row := s.db.QueryRowContext(r.Context(), `
+		SELECT id, occurred_at, (metadata->>'active_until')::timestamptz, score
+		FROM motion_events
+		WHERE camera_id = $1
+			AND status <> 'suppressed'
+			AND (metadata->>'active_until') IS NOT NULL
+			AND (metadata->>'active_until')::timestamptz > now()
+		ORDER BY occurred_at DESC
+		LIMIT 1
+	`, cameraID)
+	var event activeEventMarker
+	if err := row.Scan(&event.ID, &event.StartedAt, &event.ActiveUntil, &event.Score); err != nil {
+		return nil
+	}
+	event.EventType = "motion_detected"
+	return &event
 }
 
 func (s *Server) findLiveCamera(r *http.Request, cameraID string) (liveCamera, error) {

@@ -81,6 +81,9 @@ func (j *recordingJob) run(ctx context.Context) {
 	started := time.Now().UTC()
 	_ = upsertRecorderJob(ctx, j.db, j.workerID, j.camera, "running", &started, nil, "")
 	_ = insertSystemEvent(ctx, j.db, "recorder.job_start", "recorder", &j.camera.ID, "info", "recorder job started", map[string]any{"camera_name": j.camera.Name, "worker_id": j.workerID})
+	if j.camera.MotionDetectionEnabled {
+		go j.runLiveMotionDetector(ctx)
+	}
 
 	scanTicker := time.NewTicker(5 * time.Second)
 	defer scanTicker.Stop()
@@ -266,7 +269,8 @@ func (j *recordingJob) scanSegments(ctx context.Context) error {
 			continue
 		}
 
-		if err := insertSegment(ctx, j.db, metadata); err != nil {
+		segmentID, err := insertSegmentWithID(ctx, j.db, metadata)
+		if err != nil {
 			return err
 		}
 
@@ -276,6 +280,7 @@ func (j *recordingJob) scanSegments(ctx context.Context) error {
 		j.mu.Unlock()
 
 		log.Printf("segment metadata inserted camera_id=%s camera_name=%q file=%s size_bytes=%d", j.camera.ID, j.camera.Name, metadata.FilePath, metadata.SizeBytes)
+		_ = segmentID
 	}
 	return nil
 }

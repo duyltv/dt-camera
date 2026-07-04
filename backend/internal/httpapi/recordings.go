@@ -43,6 +43,17 @@ type availabilityRange struct {
 	SegmentCount    int       `json:"segment_count"`
 }
 
+type timelineEventRange struct {
+	ID              string    `json:"id"`
+	EventType       string    `json:"event_type"`
+	CameraID        string    `json:"camera_id"`
+	StartTime       time.Time `json:"start_time"`
+	EndTime         time.Time `json:"end_time"`
+	DurationSeconds float64   `json:"duration_seconds"`
+	Score           float64   `json:"score"`
+	Status          string    `json:"status"`
+}
+
 type availabilityGap struct {
 	StartTime       time.Time `json:"start_time"`
 	EndTime         time.Time `json:"end_time"`
@@ -50,9 +61,10 @@ type availabilityGap struct {
 }
 
 type cameraAvailabilityResponse struct {
-	CameraID string              `json:"camera_id"`
-	Ranges   []availabilityRange `json:"ranges"`
-	Gaps     []availabilityGap   `json:"gaps"`
+	CameraID string               `json:"camera_id"`
+	Ranges   []availabilityRange  `json:"ranges"`
+	Gaps     []availabilityGap    `json:"gaps"`
+	Events   []timelineEventRange `json:"events"`
 }
 
 type playbackPrepareRequest struct {
@@ -128,8 +140,14 @@ func (s *Server) handleRecordingTimeline(w http.ResponseWriter, r *http.Request)
 		writeDBError(w, err)
 		return
 	}
+	events, err := s.searchTimelineEvents(r, filter)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
 
 	availability := buildAvailability(filter.CameraIDs, segments, gapThreshold)
+	attachTimelineEvents(availability, events)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"camera_availability":   availability,
 		"gap_threshold_seconds": gapThreshold.Seconds(),
@@ -598,6 +616,59 @@ func buildAvailability(cameraIDs []string, segments []recordingSegmentResponse, 
 		})
 	}
 	return result
+}
+
+func attachTimelineEvents(availability []cameraAvailabilityResponse, events []timelineEventRange) {
+	byCamera := make(map[string][]timelineEventRange)
+	for _, event := range events {
+		byCamera[event.CameraID] = append(byCamera[event.CameraID], event)
+	}
+	for i := range availability {
+		availability[i].Events = byCamera[availability[i].CameraID]
+		if availability[i].Events == nil {
+			availability[i].Events = []timelineEventRange{}
+		}
+	}
+}
+
+func (s *Server) searchTimelineEvents(r *http.Request, filter recordingFilter) ([]timelineEventRange, error) {
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT
+			id,
+			camera_id,
+			occurred_at,
+			COALESCE((metadata->>'active_until')::timestamptz, occurred_at + interval '10 seconds') AS end_time,
+			score,
+			status
+		FROM motion_events
+		WHERE camera_id = ANY($1)
+			AND occurred_at <= $3
+			AND COALESCE((metadata->>'active_until')::timestamptz, occurred_at + interval '10 seconds') >= $2
+			AND status <> 'suppressed'
+		ORDER BY camera_id, occurred_at
+	`, pq.Array(filter.CameraIDs), filter.StartTime, filter.EndTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	events := []timelineEventRange{}
+	for rows.Next() {
+		var event timelineEventRange
+		if err := rows.Scan(&event.ID, &event.CameraID, &event.StartTime, &event.EndTime, &event.Score, &event.Status); err != nil {
+			return nil, err
+		}
+		event.EventType = "motion_detected"
+		if event.EndTime.Before(event.StartTime) {
+			event.EndTime = event.StartTime.Add(10 * time.Second)
+		}
+		event.DurationSeconds = event.EndTime.Sub(event.StartTime).Seconds()
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return events, nil
 }
 
 func safeRecordingFilePath(storageRoot, filePath string) (string, error) {
