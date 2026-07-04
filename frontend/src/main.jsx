@@ -210,7 +210,7 @@ function HealthDashboardPage() {
     setData({
       health,
       recorder,
-      storage: storage.storage_locations || [],
+      storage: (storage.storage_locations || []).map(normalizeStorageLocation),
       cameras: cameras.cameras || [],
       events: events.events || [],
       openAlerts: alerts.alerts || [],
@@ -229,129 +229,347 @@ function HealthDashboardPage() {
     run();
   }
 
+  const summary = healthSummary(data);
+
   return (
     <Panel title="Health">
-      <Toolbar>
-        <button onClick={run}>Refresh</button>
-      </Toolbar>
-      <section className="build-info">
-        <h3>Build &amp; Migrations</h3>
-        {data.version ? (
-          <DataTable
-            rows={[{
-              app_version: data.version.app_version,
-              git_commit: data.version.git_commit || '—',
-              build_time: data.version.build_time || '—',
-              latest_migration: data.version.latest_migration ?? 0,
-              migrations_applied: data.version.migrations_applied ?? 0,
-            }]}
-            columns={['app_version', 'git_commit', 'build_time', 'latest_migration', 'migrations_applied']}
-          />
-        ) : (
-          !loading && <p className="muted">Build identity not available.</p>
-        )}
+      <section className={`health-hero health-hero-${summary.tone}`}>
+        <div className="health-hero-copy">
+          <span>System health</span>
+          <h3>{summary.title}</h3>
+          <p>{summary.message}</p>
+        </div>
+        <div className="health-score" style={{ '--score': `${summary.score}%` }}>
+          <strong>{summary.score}</strong>
+          <span>score</span>
+        </div>
+        <button type="button" onClick={run} disabled={loading}>{loading ? 'Refreshing...' : 'Refresh'}</button>
       </section>
       <State loading={loading} error={error} />
-      <section className="events-panel">
-        <h3>Open alerts ({data.openAlerts.length})</h3>
+
+      <div className="health-kpi-grid">
+        <HealthKPI title="Backend" value={data.health?.status || 'unknown'} detail={`Database: ${data.health?.database || 'unknown'}`} tone={data.health?.status === 'ok' && data.health?.database === 'ok' ? 'ok' : 'warning'} />
+        <HealthKPI title="Recorder" value={`${summary.recorderOnline}/${summary.recorderTotal}`} detail={`${summary.activeJobs} active jobs`} tone={summary.recorderOnline ? 'ok' : 'error'} />
+        <HealthKPI title="Storage" value={`${summary.storageHealthy}/${summary.storageTotal}`} detail={`${formatBytes(summary.storageFree)} free`} tone={summary.storageProblems ? 'warning' : 'ok'} />
+        <HealthKPI title="Cameras" value={`${summary.recordingCameras}/${summary.enabledCameras}`} detail={`${summary.streamingCameras} live enabled`} tone={summary.enabledCameras ? 'ok' : 'warning'} />
+      </div>
+
+      <section className="health-section">
+        <div className="health-section-heading">
+          <div>
+            <h3>Open Alerts</h3>
+            <p>{data.openAlerts.length ? 'Items that need operator attention.' : 'No active alert requires attention.'}</p>
+          </div>
+          <StatusBadge kind={data.openAlerts.length ? 'warning' : 'ok'} text={`${data.openAlerts.length} open`} />
+        </div>
         {data.openAlerts.length ? (
-          <DataTable
-            rows={data.openAlerts.map((alertItem) => ({
-              opened_at: alertItem.opened_at ? new Date(alertItem.opened_at).toLocaleString() : '',
-              rule_name: alertItem.rule_name,
-              severity: <AlertSeverityBadge severity={alertItem.severity} />,
-              status: <AlertStatusBadge status={alertItem.status} />,
-              message: alertItem.message,
-              actions: (
+          <div className="health-alert-list">
+            {data.openAlerts.map((alertItem) => (
+              <article className="health-alert-card" key={alertItem.id}>
+                <div>
+                  <AlertSeverityBadge severity={alertItem.severity} />
+                  <AlertStatusBadge status={alertItem.status} />
+                </div>
+                <strong>{alertItem.rule_name || humanizeKey(alertItem.event_type || 'Alert')}</strong>
+                <p>{alertItem.message}</p>
+                <small>Opened {formatRelativeTime(alertItem.opened_at)}</small>
                 <span className="row-actions">
                   {alertItem.status === 'open' && <button type="button" onClick={() => acknowledgeAlert(alertItem)}>Acknowledge</button>}
                   <button type="button" onClick={() => resolveAlert(alertItem)}>Resolve</button>
                 </span>
-              ),
-            }))}
-            columns={['opened_at', 'rule_name', 'severity', 'status', 'message', 'actions']}
-          />
+              </article>
+            ))}
+          </div>
         ) : (
-          !loading && <EmptyState title="No open alerts" body="All systems are within configured thresholds." />
+          !loading && <EmptyState title="No open alerts" body="All monitored thresholds are currently clear." />
         )}
       </section>
-      <div className="dashboard-grid">
-        <section>
-          <h3>Backend</h3>
-          <DataTable rows={data.health ? [data.health] : []} columns={['service', 'status', 'database', 'started_at']} />
-        </section>
-        <section>
-          <h3>Recorder Heartbeats</h3>
+
+      <div className="health-card-grid">
+        <section className="health-section">
+          <div className="health-section-heading">
+            <div>
+              <h3>Recorder Workers</h3>
+              <p>Worker heartbeat freshness and active ffmpeg workload.</p>
+            </div>
+          </div>
           {data.recorder?.heartbeats?.length ? (
-            <DataTable
-              rows={data.recorder.heartbeats.map((row) => ({ ...row, status: <StatusBadge kind={recorderStatusKind(row)} text={row.status} /> }))}
-              columns={['worker_id', 'status', 'active_job_count', 'last_seen_at']}
-            />
+            <div className="health-list">
+              {data.recorder.heartbeats.map((row) => (
+                <HealthListItem
+                  key={row.worker_id}
+                  title={row.worker_id}
+                  meta={`${row.active_job_count || 0} active jobs`}
+                  detail={`Last seen ${formatRelativeTime(row.last_seen_at)}`}
+                  badge={<StatusBadge kind={recorderStatusKind(row)} text={recorderStatusText(row)} />}
+                />
+              ))}
+            </div>
           ) : (
             <EmptyState title="No recorder heartbeats" body="The recorder worker has not checked in yet." />
           )}
         </section>
-        <section>
-          <h3>Storage</h3>
+
+        <section className="health-section">
+          <div className="health-section-heading">
+            <div>
+              <h3>Storage Capacity</h3>
+              <p>Recording folders, writeability, and disk pressure.</p>
+            </div>
+          </div>
           {data.storage.length ? (
-            <DataTable rows={data.storage.map(formatStorageRow)} columns={['name', 'health_status', 'exists', 'writable', 'used_percent', 'free_bytes', 'latest_validation_error']} />
+            <div className="health-storage-list">
+              {data.storage.map((item) => <HealthStorageRow key={item.id} item={item} />)}
+            </div>
           ) : (
             <EmptyState title="No storage configured" body="Add a storage location to start recording." />
           )}
         </section>
-        <section>
-          <h3>Cameras</h3>
+
+        <section className="health-section">
+          <div className="health-section-heading">
+            <div>
+              <h3>Cameras</h3>
+              <p>Channel availability, recording state, and live-stream readiness.</p>
+            </div>
+          </div>
           {data.cameras.length ? (
-            <DataTable rows={data.cameras.map(formatCameraRow)} columns={['name', 'enabled', 'recording_enabled', 'retention_days', 'storage_location_id']} />
+            <div className="health-camera-grid">
+              {data.cameras.map((camera) => <HealthCameraCard key={camera.id} camera={camera} />)}
+            </div>
           ) : (
             <EmptyState title="No cameras" body="Add a camera to begin capturing RTSP streams." />
           )}
         </section>
-        <section>
-          <h3>Recorder Jobs</h3>
+
+        <section className="health-section">
+          <div className="health-section-heading">
+            <div>
+              <h3>Recorder Jobs</h3>
+              <p>Current recording processes and latest errors.</p>
+            </div>
+          </div>
           {data.recorder?.active_jobs?.length ? (
-            <DataTable rows={data.recorder.active_jobs} columns={['camera_name', 'status', 'worker_id', 'last_error', 'updated_at']} />
+            <div className="health-list">
+              {data.recorder.active_jobs.map((job) => (
+                <HealthListItem
+                  key={job.camera_id || `${job.camera_name}-${job.worker_id}`}
+                  title={job.camera_name || 'Camera'}
+                  meta={humanizeKey(job.status || 'unknown')}
+                  detail={job.last_error || `Updated ${formatRelativeTime(job.updated_at)}`}
+                  badge={<StatusBadge kind={job.status === 'running' ? 'ok' : 'warning'} text={job.status || 'unknown'} />}
+                />
+              ))}
+            </div>
           ) : (
-            <EmptyState title="No recorder jobs" body="No ffmpeg processes are currently running." />
-          )}
-        </section>
-        <section>
-          <h3>Latest Segments</h3>
-          {data.recorder?.last_segments?.length ? (
-            <DataTable rows={data.recorder.last_segments} columns={['camera_name', 'status', 'start_time', 'end_time']} />
-          ) : (
-            <EmptyState title="No segments yet" body="Recorded segments will appear here once the recorder is running." />
+            <EmptyState title="No recorder jobs" body="No ffmpeg recording processes are currently running." />
           )}
         </section>
       </div>
-      <section className="events-panel">
-        <h3>Latest Events</h3>
+
+      <section className="health-section">
+        <div className="health-section-heading">
+          <div>
+            <h3>Latest Segments</h3>
+            <p>Most recent saved recording clips.</p>
+          </div>
+        </div>
+        {data.recorder?.last_segments?.length ? (
+          <div className="health-list">
+            {data.recorder.last_segments.map((segment) => (
+              <HealthListItem
+                key={segment.id || `${segment.camera_name}-${segment.start_time}`}
+                title={segment.camera_name || 'Camera'}
+                meta={humanizeKey(segment.status || 'segment')}
+                detail={segment.start_time && segment.end_time ? `${formatDateTime(segment.start_time)} → ${formatDateTime(segment.end_time)}` : 'No segment saved yet'}
+                badge={<StatusBadge kind={segment.status === 'completed' ? 'ok' : 'warning'} text={segment.status || 'unknown'} />}
+              />
+            ))}
+          </div>
+        ) : (
+          <EmptyState title="No segments yet" body="Recorded segments will appear here once the recorder is running." />
+        )}
+      </section>
+
+      <section className="health-section">
+        <div className="health-section-heading">
+          <div>
+            <h3>Latest Events</h3>
+            <p>Recent backend, recorder, cleanup, and live stream activity.</p>
+          </div>
+        </div>
         {data.events.length ? (
-          <DataTable rows={data.events.map(formatEventRow)} columns={['created_at', 'severity', 'event_type', 'entity_type', 'message']} />
+          <div className="health-event-list">
+            {data.events.map((eventItem) => (
+              <article className="health-event-row" key={eventItem.id || `${eventItem.created_at}-${eventItem.event_type}`}>
+                <AlertSeverityBadge severity={eventItem.severity || 'info'} />
+                <div>
+                  <strong>{humanizeKey(eventItem.event_type)}</strong>
+                  <p>{eventItem.message || humanizeKey(eventItem.entity_type || 'event')}</p>
+                </div>
+                <time>{formatRelativeTime(eventItem.created_at)}</time>
+              </article>
+            ))}
+          </div>
         ) : (
           <EmptyState title="No events" body="System events such as logins, CRUD, and recorder activity will appear here." />
+        )}
+      </section>
+
+      <section className="health-section health-build-section">
+        <div className="health-section-heading">
+          <div>
+            <h3>Build &amp; Migrations</h3>
+            <p>Version and database migration state.</p>
+          </div>
+        </div>
+        {data.version ? (
+          <div className="health-build-grid">
+            <HealthMiniStat label="App version" value={data.version.app_version || 'dev'} />
+            <HealthMiniStat label="Git commit" value={shortID(data.version.git_commit || '') || 'unknown'} />
+            <HealthMiniStat label="Build time" value={data.version.build_time || 'not set'} />
+            <HealthMiniStat label="Migrations" value={`${data.version.migrations_applied ?? 0}/${data.version.latest_migration ?? 0}`} />
+          </div>
+        ) : (
+          !loading && <p className="muted">Build identity not available.</p>
         )}
       </section>
     </Panel>
   );
 }
 
+function HealthKPI({ title, value, detail, tone = 'muted' }) {
+  return (
+    <section className={`health-kpi health-kpi-${tone}`}>
+      <span>{title}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </section>
+  );
+}
+
+function HealthListItem({ title, meta, detail, badge }) {
+  return (
+    <article className="health-list-item">
+      <div>
+        <strong>{title}</strong>
+        <span>{meta}</span>
+        <p>{detail}</p>
+      </div>
+      {badge}
+    </article>
+  );
+}
+
+function HealthStorageRow({ item }) {
+  const insight = storageInsights(item);
+  const status = insight.status;
+  return (
+    <article className={`health-storage-row health-storage-${status.kind}`}>
+      <div className="health-storage-top">
+        <div>
+          <strong>{item.name}</strong>
+          <span>{item.container_path}</span>
+        </div>
+        <StatusBadge kind={status.badge} text={status.label} />
+      </div>
+      <div className="health-usage-bar">
+        <span style={{ width: `${insight.usedPercent}%` }} />
+      </div>
+      <div className="health-storage-meta">
+        <span>{insight.usedPercent.toFixed(1)}% used</span>
+        <span>{formatBytes(insight.free)} available</span>
+        <span>{item.exists ? 'Exists' : 'Missing'}</span>
+        <span>{item.writable ? 'Writable' : 'Not writable'}</span>
+      </div>
+      {insight.reasons.length > 0 && <p>{insight.reasons.join(' ')}</p>}
+    </article>
+  );
+}
+
+function HealthCameraCard({ camera }) {
+  const enabled = Boolean(camera.enabled);
+  const recording = Boolean(camera.recording_enabled);
+  const streaming = camera.stream_enabled !== false;
+  return (
+    <article className="health-camera-card">
+      <div>
+        <strong>{camera.name}</strong>
+        <span>{camera.location || camera.camera_group || shortID(camera.id)}</span>
+      </div>
+      <div className="health-camera-badges">
+        <StatusBadge kind={enabled ? 'ok' : 'muted'} text={enabled ? 'enabled' : 'disabled'} />
+        <StatusBadge kind={recording ? 'ok' : 'warning'} text={recording ? 'recording' : 'not recording'} />
+        <StatusBadge kind={streaming ? 'ok' : 'muted'} text={streaming ? 'live enabled' : 'live off'} />
+      </div>
+      <small>{camera.record_audio || camera.stream_audio ? `Audio: ${camera.record_audio ? 'recording' : ''}${camera.record_audio && camera.stream_audio ? ' + ' : ''}${camera.stream_audio ? 'live' : ''}` : 'Audio off'}</small>
+    </article>
+  );
+}
+
+function HealthMiniStat({ label, value }) {
+  return (
+    <div className="health-mini-stat">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
 function StoragePage() {
   const [items, setItems] = useState([]);
-  const [form, setForm] = useState({ name: '', container_path: '/recordings', enabled: true });
+  const [form, setForm] = useState(newStorageForm());
+  const [editingId, setEditingId] = useState('');
+  const [editForm, setEditForm] = useState(null);
+  const [actionError, setActionError] = useState('');
   const { loading, error, run } = useLoader(load);
 
   async function load() {
     const data = await api('/api/storage-locations');
-    setItems(data.storage_locations || []);
+    setItems((data.storage_locations || []).map(normalizeStorageLocation));
   }
   useEffect(() => { run(); }, []);
 
   async function create(event) {
     event.preventDefault();
-    await api('/api/storage-locations', { method: 'POST', body: JSON.stringify(form) });
-    setForm({ name: '', container_path: '/recordings', enabled: true });
+    await api('/api/storage-locations', { method: 'POST', body: JSON.stringify(storagePayload(form)) });
+    setForm(newStorageForm());
     run();
+  }
+
+  function startEdit(item) {
+    setEditingId(item.id);
+    setEditForm(storageToForm(item));
+    setActionError('');
+  }
+
+  function cancelEdit() {
+    setEditingId('');
+    setEditForm(null);
+    setActionError('');
+  }
+
+  async function saveEdit(event) {
+    event.preventDefault();
+    if (!editingId || !editForm) return;
+    setActionError('');
+    try {
+      await api(`/api/storage-locations/${editingId}`, { method: 'PATCH', body: JSON.stringify(storagePayload(editForm)) });
+      cancelEdit();
+      run();
+    } catch (err) {
+      setActionError(err.message);
+    }
+  }
+
+  async function setStorageEnabled(item, enabled) {
+    setActionError('');
+    try {
+      await api(`/api/storage-locations/${item.id}/enabled`, { method: 'PATCH', body: JSON.stringify({ enabled }) });
+      run();
+    } catch (err) {
+      setActionError(err.message);
+    }
   }
 
   const summary = storageSummary(items);
@@ -370,8 +588,26 @@ function StoragePage() {
         <StorageMetric label="Locations" value={items.length} detail={`${summary.enabled} enabled`} />
         <StorageMetric label="Total capacity" value={formatBytes(summary.total)} detail={`${formatBytes(summary.used)} used`} />
         <StorageMetric label="Free space" value={formatBytes(summary.free)} detail={`${summary.usedPercent.toFixed(1)}% used overall`} />
-        <StorageMetric label="Attention" value={summary.problemCount} detail="warnings or errors" tone={summary.problemCount ? 'warning' : 'ok'} />
+        <StorageMetric label="Attention" value={summary.problemCount} detail={summary.problemCount ? 'locations with active warnings or errors' : 'all enabled storage ready'} tone={summary.problemCount ? 'warning' : 'ok'} />
       </div>
+
+      {summary.attentionItems.length > 0 && (
+        <section className="storage-attention-panel">
+          <div className="section-heading">
+            <h3>Attention details</h3>
+            <p>These are the exact reasons included in the Attention count.</p>
+          </div>
+          <div className="storage-attention-list">
+            {summary.attentionItems.map((entry) => (
+              <article key={entry.id}>
+                <StatusBadge kind={entry.status.badge} text={entry.status.label} />
+                <strong>{entry.name}</strong>
+                <span>{entry.reasons.join(' ')}</span>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="storage-create-panel">
         <div className="section-heading">
@@ -379,30 +615,111 @@ function StoragePage() {
           <p>Use the container path mounted into backend and recorder, for example <code>/recordings</code>.</p>
         </div>
         <form className="storage-create-form" onSubmit={create}>
-          <Field label="Display name" help="Shown in camera setup and health dashboards.">
-            <input placeholder="Primary recordings" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-          </Field>
-          <Field label="Container path" help="Backend validates that this folder exists and is writable inside the container.">
-            <input placeholder="/recordings" value={form.container_path} onChange={(e) => setForm({ ...form, container_path: e.target.value })} required />
-          </Field>
-          <label className="switch-row storage-enable-row">
-            <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
-            <span><strong>Enable immediately</strong><small>Allow cameras to use this location after validation passes.</small></span>
-          </label>
+          <StorageFields form={form} onChange={(patch) => setForm({ ...form, ...patch })} />
           <div className="form-actions">
             <button>Create storage</button>
           </div>
         </form>
       </section>
       <State loading={loading} error={error} />
+      {actionError && <div className="error">{actionError}</div>}
       {items.length ? (
         <div className="storage-card-grid">
-          {items.map((item) => <StorageLocationCard key={item.id} item={item} />)}
+          {items.map((item) => (
+            <StorageLocationCard
+              editing={editingId === item.id}
+              editForm={editForm}
+              item={item}
+              key={item.id}
+              onCancelEdit={cancelEdit}
+              onEdit={() => startEdit(item)}
+              onEditChange={(patch) => setEditForm({ ...editForm, ...patch })}
+              onSaveEdit={saveEdit}
+              onSetEnabled={(enabled) => setStorageEnabled(item, enabled)}
+            />
+          ))}
         </div>
       ) : (
         !loading && <EmptyState title="No storage locations" body="Create a storage location to enable recording." />
       )}
     </Panel>
+  );
+}
+
+function newStorageForm() {
+  return { name: '', container_path: '/recordings', enabled: true, max_storage_size: '', max_storage_unit: 'GB' };
+}
+
+function normalizeStorageLocation(item) {
+  return { ...item, is_enabled: item.is_enabled ?? item.enabled };
+}
+
+function storagePayload(values) {
+  return {
+    name: values.name.trim(),
+    container_path: values.container_path.trim(),
+    enabled: values.enabled,
+    max_storage_bytes: storageSizeToBytes(values.max_storage_size, values.max_storage_unit),
+  };
+}
+
+function storageSizeToBytes(value, unit) {
+  const size = Number(value);
+  if (!Number.isFinite(size) || size <= 0) return null;
+  const multipliers = { MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 };
+  return Math.round(size * (multipliers[unit] || multipliers.GB));
+}
+
+function bytesToStorageSize(bytes) {
+  const value = Number(bytes || 0);
+  if (!value) return { value: '', unit: 'GB' };
+  const units = [
+    ['TB', 1024 ** 4],
+    ['GB', 1024 ** 3],
+    ['MB', 1024 ** 2],
+  ];
+  const [unit, divisor] = units.find(([, amount]) => value >= amount) || units[1];
+  const display = value / divisor;
+  return { value: Number(display.toFixed(display >= 100 ? 0 : 2)).toString(), unit };
+}
+
+function storageToForm(item) {
+  const size = bytesToStorageSize(item.max_storage_bytes);
+  return {
+    name: item.name || '',
+    container_path: item.container_path || '/recordings',
+    enabled: Boolean(item.enabled ?? item.is_enabled),
+    max_storage_size: size.value,
+    max_storage_unit: size.unit,
+  };
+}
+
+function StorageFields({ form, onChange }) {
+  return (
+    <>
+      <Field label="Display name" help="Shown in camera setup and health dashboards.">
+        <input placeholder="Primary recordings" value={form.name} onChange={(e) => onChange({ name: e.target.value })} required />
+      </Field>
+      <Field label="Container path" help="Backend validates that this folder exists and is writable inside the container.">
+        <input placeholder="/recordings" value={form.container_path} onChange={(e) => onChange({ container_path: e.target.value })} required />
+      </Field>
+      <div className="storage-size-fields">
+        <Field label="Configured limit" help="Optional operator limit used for capacity display.">
+          <input type="number" min="1" step="0.1" placeholder="No limit" value={form.max_storage_size} onChange={(e) => onChange({ max_storage_size: e.target.value })} />
+        </Field>
+        <Field label="Unit" help="MB, GB, or TB.">
+          <select value={form.max_storage_unit} onChange={(e) => onChange({ max_storage_unit: e.target.value })}>
+            <option value="MB">MB</option>
+            <option value="GB">GB</option>
+            <option value="TB">TB</option>
+          </select>
+        </Field>
+      </div>
+      <label className="switch-row storage-enable-row">
+        <input type="checkbox" checked={form.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} />
+        <span><strong>Enable storage</strong><small>Allow cameras to use this location after validation passes.</small></span>
+      </label>
+    </>
   );
 }
 
@@ -416,49 +733,59 @@ function StorageMetric({ label, value, detail, tone = '' }) {
   );
 }
 
-function StorageLocationCard({ item }) {
-  const usedPercent = clampPercent(item.used_percent);
-  const status = storageStatus(item);
-  const used = Number(item.used_bytes || 0);
-  const free = Number(item.free_bytes || 0);
-  const total = Number(item.total_bytes || used + free || 0);
+function StorageLocationCard({ item, editing, editForm, onCancelEdit, onEdit, onEditChange, onSaveEdit, onSetEnabled }) {
+  const insight = storageInsights(item);
+  const status = insight.status;
   const path = item.container_path || 'No path configured';
   return (
     <section className={`storage-card storage-card-${status.kind}`}>
+      {editing ? (
+        <form className="storage-edit-form" onSubmit={onSaveEdit}>
+          <StorageFields form={editForm} onChange={onEditChange} />
+          <div className="form-actions">
+            <button>Save storage</button>
+            <button type="button" onClick={onCancelEdit}>Cancel</button>
+          </div>
+        </form>
+      ) : (
+        <>
       <div className="storage-card-header">
         <div>
           <h3>{item.name}</h3>
           <p>{path}</p>
         </div>
-        <StatusBadge kind={status.badge} text={status.label} />
+        <div className="storage-card-actions">
+          <StatusBadge kind={status.badge} text={status.label} />
+          <button type="button" onClick={onEdit}>Edit</button>
+          <button type="button" onClick={() => onSetEnabled(!item.is_enabled)}>{item.is_enabled ? 'Disable' : 'Enable'}</button>
+        </div>
       </div>
       <div className="storage-usage-row">
-        <div className="storage-donut" style={{ '--used': `${usedPercent}%` }}>
-          <span>{usedPercent.toFixed(0)}%</span>
+        <div className="storage-donut" style={{ '--used': `${insight.usedPercent}%` }}>
+          <span>{insight.usedPercent.toFixed(0)}%</span>
         </div>
         <div className="storage-usage-main">
           <div className="storage-usage-label">
-            <strong>{formatBytes(used)} used</strong>
-            <span>{formatBytes(free)} free</span>
+            <strong>{formatBytes(insight.used)} used</strong>
+            <span>{formatBytes(insight.free)} available</span>
           </div>
-          <div className="storage-usage-bar" aria-label={`${usedPercent.toFixed(1)} percent used`}>
-            <span style={{ width: `${usedPercent}%` }} />
+          <div className="storage-usage-bar" aria-label={`${insight.usedPercent.toFixed(1)} percent used`}>
+            <span style={{ width: `${insight.usedPercent}%` }} />
           </div>
-          <small>{total ? `${formatBytes(total)} total capacity` : 'Capacity unavailable'}</small>
+          <small>{insight.configuredLimit ? `${formatBytes(insight.configuredLimit)} configured limit, ${formatBytes(insight.detectedTotal)} detected on disk` : (insight.detectedTotal ? `${formatBytes(insight.detectedTotal)} detected disk capacity` : 'Capacity unavailable')}</small>
         </div>
       </div>
       <dl className="storage-health-grid">
         <div><dt>Enabled</dt><dd>{item.is_enabled ? 'Yes' : 'No'}</dd></div>
+        <div><dt>Status</dt><dd>{status.label}</dd></div>
         <div><dt>Exists</dt><dd>{item.exists ? 'Yes' : 'No'}</dd></div>
         <div><dt>Writable</dt><dd>{item.writable ? 'Yes' : 'No'}</dd></div>
-        <div><dt>Health</dt><dd>{item.health_status || 'unknown'}</dd></div>
+        <div><dt>Limit</dt><dd>{insight.configuredLimit ? formatBytes(insight.configuredLimit) : 'None'}</dd></div>
       </dl>
-      {item.latest_validation_error ? (
-        <p className="storage-error">{item.latest_validation_error}</p>
-      ) : !item.is_enabled ? (
-        <p className="storage-muted">Storage is disabled. Enable it before assigning cameras for recording.</p>
-      ) : (
-        <p className="storage-ok">Validated and ready for recorder access.</p>
+      <div className={`storage-reason-list storage-reason-${status.kind}`}>
+        {insight.reasons.map((reason) => <span key={reason}>{reason}</span>)}
+      </div>
+        </>
       )}
     </section>
   );
@@ -1257,39 +1584,208 @@ function UsersPage() {
 function PermissionsPage() {
   const [users, setUsers] = useState([]);
   const [cameras, setCameras] = useState([]);
-  const [form, setForm] = useState({ user_id: '', camera_id: '', can_view_live: true, can_view_playback: true });
+  const [selectedUserID, setSelectedUserID] = useState('');
+  const [permissions, setPermissions] = useState([]);
+  const [permissionError, setPermissionError] = useState('');
+  const [permissionLoading, setPermissionLoading] = useState(false);
+  const [savingCameraID, setSavingCameraID] = useState('');
   const { loading, error, run } = useLoader(load);
 
   async function load() {
     const [userData, cameraData] = await Promise.all([api('/api/users'), api('/api/cameras')]);
-    setUsers(userData.users || []);
+    const loadedUsers = userData.users || [];
+    setUsers(loadedUsers);
     setCameras(cameraData.cameras || []);
+    setSelectedUserID((current) => current || loadedUsers.find((user) => user.role !== 'admin')?.id || loadedUsers[0]?.id || '');
   }
   useEffect(() => { run(); }, []);
 
-  async function grant(event) {
-    event.preventDefault();
-    await api(`/api/users/${form.user_id}/camera-permissions/${form.camera_id}`, { method: 'PUT', body: JSON.stringify({ can_view_live: form.can_view_live, can_view_playback: form.can_view_playback }) });
-    run();
+  async function loadPermissions(userID) {
+    if (!userID) {
+      setPermissions([]);
+      return;
+    }
+    setPermissionLoading(true);
+    setPermissionError('');
+    setPermissions([]);
+    try {
+      const data = await api(`/api/users/${userID}/camera-permissions`);
+      setPermissions(data.camera_permissions || []);
+    } catch (err) {
+      setPermissionError(err.message);
+    } finally {
+      setPermissionLoading(false);
+    }
   }
-  async function revoke() {
-    await api(`/api/users/${form.user_id}/camera-permissions/${form.camera_id}`, { method: 'DELETE' });
+
+  useEffect(() => { loadPermissions(selectedUserID); }, [selectedUserID]);
+
+  const selectedUser = users.find((user) => user.id === selectedUserID);
+  const selectedUserIsAdmin = selectedUser?.role === 'admin';
+  const permissionMap = new Map(permissions.map((permission) => [permission.camera_id, permission]));
+  const summary = cameras.reduce((acc, camera) => {
+    if (selectedUserIsAdmin) {
+      acc.live += 1;
+      acc.playback += 1;
+      acc.any += 1;
+      return acc;
+    }
+    const permission = permissionMap.get(camera.id);
+    if (permission?.can_view_live) acc.live += 1;
+    if (permission?.can_view_playback) acc.playback += 1;
+    if (permission?.can_view_live || permission?.can_view_playback) acc.any += 1;
+    return acc;
+  }, { any: 0, live: 0, playback: 0 });
+
+  async function savePermission(cameraID, nextPermission) {
+    if (!selectedUserID || !cameraID) return;
+    setSavingCameraID(cameraID);
+    setPermissionError('');
+    try {
+      if (!nextPermission.can_view_live && !nextPermission.can_view_playback) {
+        await api(`/api/users/${selectedUserID}/camera-permissions/${cameraID}`, { method: 'DELETE' });
+      } else {
+        await api(`/api/users/${selectedUserID}/camera-permissions/${cameraID}`, { method: 'PUT', body: JSON.stringify(nextPermission) });
+      }
+      await loadPermissions(selectedUserID);
+    } catch (err) {
+      setPermissionError(err.message);
+    } finally {
+      setSavingCameraID('');
+    }
+  }
+
+  function togglePermission(cameraID, key) {
+    const current = permissionMap.get(cameraID) || { can_view_live: false, can_view_playback: false };
+    savePermission(cameraID, {
+      can_view_live: key === 'can_view_live' ? !current.can_view_live : current.can_view_live,
+      can_view_playback: key === 'can_view_playback' ? !current.can_view_playback : current.can_view_playback,
+    });
+  }
+
+  function grantBoth(cameraID) {
+    savePermission(cameraID, { can_view_live: true, can_view_playback: true });
+  }
+
+  function revokeAll(cameraID) {
+    savePermission(cameraID, { can_view_live: false, can_view_playback: false });
   }
 
   return (
     <Panel title="Camera Permissions">
-      <FormGrid onSubmit={grant}>
-        <select value={form.user_id} onChange={(e) => setForm({ ...form, user_id: e.target.value })}><option value="">User</option>{users.map((u) => <option key={u.id} value={u.id}>{u.email}</option>)}</select>
-        <select value={form.camera_id} onChange={(e) => setForm({ ...form, camera_id: e.target.value })}><option value="">Camera</option>{cameras.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
-        <label className="check"><input type="checkbox" checked={form.can_view_live} onChange={(e) => setForm({ ...form, can_view_live: e.target.checked })} /> Live</label>
-        <label className="check"><input type="checkbox" checked={form.can_view_playback} onChange={(e) => setForm({ ...form, can_view_playback: e.target.checked })} /> Playback</label>
-        <button>Grant</button>
-        <button type="button" onClick={revoke}>Revoke</button>
-      </FormGrid>
       <State loading={loading} error={error} />
+      {permissionError && <div className="error">{permissionError}</div>}
       {!users.length && !loading && <EmptyState title="No users" body="Create a user before granting permissions." />}
       {!cameras.length && !loading && <EmptyState title="No cameras" body="Add a camera before granting permissions." />}
+      {users.length > 0 && cameras.length > 0 && (
+        <div className="permissions-layout">
+          <aside className="permissions-users">
+            <div className="section-heading">
+              <h3>Users</h3>
+              <p>Select a user to review their camera access.</p>
+            </div>
+            <div className="permissions-user-list">
+              {users.map((user) => (
+                <button
+                  className={'permissions-user-card' + (user.id === selectedUserID ? ' selected' : '')}
+                  key={user.id}
+                  type="button"
+                  onClick={() => setSelectedUserID(user.id)}
+                >
+                  <strong>{user.display_name || user.email}</strong>
+                  <span>{user.email}</span>
+                  <small>
+                    <StatusBadge kind={user.role === 'admin' ? 'ok' : 'muted'} text={user.role} />
+                    <StatusBadge kind={user.active === false || user.is_active === false ? 'muted' : 'ok'} text={user.active === false || user.is_active === false ? 'inactive' : 'active'} />
+                  </small>
+                </button>
+              ))}
+            </div>
+          </aside>
+
+          <section className="permissions-main">
+            <div className="permissions-hero">
+              <div>
+                <span>Selected user</span>
+                <h3>{selectedUser?.display_name || selectedUser?.email || 'No user selected'}</h3>
+                <p>{selectedUserIsAdmin ? 'Admins have inherited access to every camera. Explicit camera grants are only needed for normal users.' : 'Grant only the live and playback access this person should use.'}</p>
+              </div>
+              <div className="permissions-summary-grid">
+                <PermissionMetric label="Any access" value={`${summary.any}/${cameras.length}`} />
+                <PermissionMetric label="Live" value={`${summary.live}/${cameras.length}`} />
+                <PermissionMetric label="Playback" value={`${summary.playback}/${cameras.length}`} />
+              </div>
+            </div>
+
+            {permissionLoading ? <p className="muted">Loading permissions...</p> : (
+              <div className="permissions-camera-grid">
+                {cameras.map((camera) => {
+                  const explicitPermission = permissionMap.get(camera.id) || { can_view_live: false, can_view_playback: false };
+                  const permission = selectedUserIsAdmin ? { can_view_live: true, can_view_playback: true } : explicitPermission;
+                  const saving = savingCameraID === camera.id;
+                  const hasAny = permission.can_view_live || permission.can_view_playback;
+                  return (
+                    <article className={'permissions-camera-card' + (hasAny ? ' granted' : '') + (selectedUserIsAdmin ? ' inherited' : '')} key={camera.id}>
+                      <div className="permissions-camera-heading">
+                        <div>
+                          <strong>{camera.name}</strong>
+                          <span>{camera.location || camera.camera_group || shortID(camera.id)}</span>
+                        </div>
+                        <StatusBadge kind={camera.enabled ? 'ok' : 'muted'} text={camera.enabled ? 'enabled' : 'disabled'} />
+                      </div>
+                      <div className="permissions-toggle-row">
+                        <PermissionToggle
+                          active={permission.can_view_live}
+                          disabled={saving || selectedUserIsAdmin}
+                          label="Live"
+                          statusText={selectedUserIsAdmin ? 'Admin access' : undefined}
+                          onClick={() => togglePermission(camera.id, 'can_view_live')}
+                        />
+                        <PermissionToggle
+                          active={permission.can_view_playback}
+                          disabled={saving || selectedUserIsAdmin}
+                          label="Playback"
+                          statusText={selectedUserIsAdmin ? 'Admin access' : undefined}
+                          onClick={() => togglePermission(camera.id, 'can_view_playback')}
+                        />
+                      </div>
+                      <div className="permissions-card-actions">
+                        {selectedUserIsAdmin ? (
+                          <span>Role-based access. No camera grant required.</span>
+                        ) : (
+                          <>
+                            <button type="button" disabled={saving || (permission.can_view_live && permission.can_view_playback)} onClick={() => grantBoth(camera.id)}>Grant both</button>
+                            <button type="button" disabled={saving || !hasAny} onClick={() => revokeAll(camera.id)}>Revoke</button>
+                          </>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </Panel>
+  );
+}
+
+function PermissionMetric({ label, value }) {
+  return (
+    <div className="permission-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function PermissionToggle({ active, disabled, label, onClick, statusText }) {
+  return (
+    <button className={'permission-toggle' + (active ? ' active' : '')} type="button" disabled={disabled} onClick={onClick}>
+      <span>{label}</span>
+      <strong>{statusText || (active ? 'Allowed' : 'Blocked')}</strong>
+    </button>
   );
 }
 
@@ -1309,20 +1805,32 @@ function LayoutCanvas({ layout, cameras, onChange, onError }) {
     return item.id || item.item_id;
   }
 
-  function gridRect() {
+  function gridMetrics() {
     const el = gridRef.current;
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    return { left: r.left, top: r.top, width: r.width, height: r.height };
+    const style = window.getComputedStyle(el);
+    const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
+    const paddingRight = Number.parseFloat(style.paddingRight) || 0;
+    const paddingTop = Number.parseFloat(style.paddingTop) || 0;
+    const paddingBottom = Number.parseFloat(style.paddingBottom) || 0;
+    const columnGap = Number.parseFloat(style.columnGap) || 0;
+    const rowGap = Number.parseFloat(style.rowGap) || 0;
+    const contentWidth = Math.max(1, r.width - paddingLeft - paddingRight - columnGap * Math.max(0, cols - 1));
+    const contentHeight = Math.max(1, r.height - paddingTop - paddingBottom - rowGap * Math.max(0, rows - 1));
+    return {
+      left: r.left + paddingLeft,
+      top: r.top + paddingTop,
+      cellWidth: contentWidth / cols,
+      cellHeight: contentHeight / rows,
+    };
   }
 
   function pixelToCell(px, py) {
-    const r = gridRect();
-    if (!r) return { x: 0, y: 0 };
-    const cw = r.width / cols || 1;
-    const ch = r.height / rows || 1;
-    let cx = Math.floor((px - r.left) / cw);
-    let cy = Math.floor((py - r.top) / ch);
+    const metrics = gridMetrics();
+    if (!metrics) return { x: 0, y: 0 };
+    let cx = Math.floor((px - metrics.left) / metrics.cellWidth);
+    let cy = Math.floor((py - metrics.top) / metrics.cellHeight);
     cx = Math.max(0, Math.min(cols - 1, cx));
     cy = Math.max(0, Math.min(rows - 1, cy));
     return { x: cx, y: cy };
@@ -1356,12 +1864,10 @@ function LayoutCanvas({ layout, cameras, onChange, onError }) {
 
   function updatedItemsForDrag(event) {
     if (!drag) return items;
-    const rect = gridRect();
-    if (!rect) return items;
-    const cw = rect.width / cols || 1;
-    const ch = rect.height / rows || 1;
-    const dxc = Math.round((event.clientX - drag.startMouseX) / cw);
-    const dyc = Math.round((event.clientY - drag.startMouseY) / ch);
+    const metrics = gridMetrics();
+    if (!metrics) return items;
+    const dxc = Math.round((event.clientX - drag.startMouseX) / metrics.cellWidth);
+    const dyc = Math.round((event.clientY - drag.startMouseY) / metrics.cellHeight);
     return items.map((item) => {
       if (itemID(item) !== drag.itemId) return item;
       let x = drag.startX;
@@ -1465,7 +1971,7 @@ function LayoutCanvas({ layout, cameras, onChange, onError }) {
         style={{
           '--layout-columns': cols,
           gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-          gridTemplateRows: `repeat(${rows}, minmax(96px, auto))`,
+          gridTemplateRows: `repeat(${rows}, var(--layout-row-height))`,
         }}
         onMouseMove={onGridMouseMove}
         onMouseUp={onGridMouseUp}
@@ -1725,17 +2231,19 @@ function LiveLayoutPage() {
       {actionError && <ErrorText message={actionError} />}
       {!layouts.length && !loading && <EmptyState title="No layouts" body="Create a layout to start streaming live video." />}
       {result && layout && (
-        <LiveLayoutGrid
-          layout={layout}
-          cameras={result?.cameras || []}
-          editable={user?.role === 'admin'}
-          onError={setActionError}
-          onChange={(updatedItems) => {
-            setLayouts((prev) => prev.map((item) => (
-              item.id === layout.id ? { ...item, layout_items: updatedItems } : item
-            )));
-          }}
-        />
+        <div className={user?.role === 'admin' ? 'live-layout-wrap' : undefined}>
+          <LiveLayoutGrid
+            layout={layout}
+            cameras={result?.cameras || []}
+            editable={user?.role === 'admin'}
+            onError={setActionError}
+            onChange={(updatedItems) => {
+              setLayouts((prev) => prev.map((item) => (
+                item.id === layout.id ? { ...item, layout_items: updatedItems } : item
+              )));
+            }}
+          />
+        </div>
       )}
     </Panel>
   );
@@ -2180,11 +2688,23 @@ function LiveLayoutGrid({ layout, cameras, editable, onChange, onError }) {
     return item.id || item.item_id;
   }
 
-  function gridRect() {
+  function gridMetrics() {
     const el = gridRef.current;
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    return { left: r.left, top: r.top, width: r.width, height: r.height };
+    const style = window.getComputedStyle(el);
+    const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
+    const paddingRight = Number.parseFloat(style.paddingRight) || 0;
+    const paddingTop = Number.parseFloat(style.paddingTop) || 0;
+    const paddingBottom = Number.parseFloat(style.paddingBottom) || 0;
+    const columnGap = Number.parseFloat(style.columnGap) || 0;
+    const rowGap = Number.parseFloat(style.rowGap) || 0;
+    const contentWidth = Math.max(1, r.width - paddingLeft - paddingRight - columnGap * Math.max(0, cols - 1));
+    const contentHeight = Math.max(1, r.height - paddingTop - paddingBottom - rowGap * Math.max(0, rows - 1));
+    return {
+      cellWidth: contentWidth / cols,
+      cellHeight: contentHeight / rows,
+    };
   }
 
   function startDrag(item, mode, event) {
@@ -2206,12 +2726,10 @@ function LiveLayoutGrid({ layout, cameras, editable, onChange, onError }) {
 
   function updatedItemsForDrag(event) {
     if (!drag) return items;
-    const rect = gridRect();
-    if (!rect) return items;
-    const cw = rect.width / cols || 1;
-    const ch = rect.height / rows || 1;
-    const dxc = Math.round((event.clientX - drag.startMouseX) / cw);
-    const dyc = Math.round((event.clientY - drag.startMouseY) / ch);
+    const metrics = gridMetrics();
+    if (!metrics) return items;
+    const dxc = Math.round((event.clientX - drag.startMouseX) / metrics.cellWidth);
+    const dyc = Math.round((event.clientY - drag.startMouseY) / metrics.cellHeight);
     return items.map((item) => {
       if (itemID(item) !== drag.itemId) return item;
       let x = drag.startX;
@@ -2277,7 +2795,11 @@ function LiveLayoutGrid({ layout, cameras, editable, onChange, onError }) {
     <div
       ref={gridRef}
       className={'live-layout-grid' + (editable ? ' editable' : '')}
-      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+      style={{
+        '--layout-columns': cols,
+        gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+        gridTemplateRows: `repeat(${rows}, var(--layout-row-height))`,
+      }}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
       onMouseLeave={onMouseUp}
@@ -2456,32 +2978,176 @@ function clampPercent(value) {
 
 function storageSummary(items) {
   const summary = items.reduce((acc, item) => {
-    const used = Number(item.used_bytes || 0);
-    const free = Number(item.free_bytes || 0);
-    const total = Number(item.total_bytes || used + free || 0);
-    acc.used += used;
-    acc.free += free;
-    acc.total += total;
+    const insight = storageInsights(item);
+    const status = insight.status;
+    acc.configured += 1;
+    acc.used += insight.used;
+    acc.free += insight.free;
+    acc.total += insight.total;
     if (item.is_enabled) acc.enabled += 1;
-    if (storageStatus(item).kind !== 'ok') acc.problemCount += 1;
+    if (!insight.attention) acc.ready += 1;
+    if (insight.attention) {
+      acc.problemCount += 1;
+      acc.attentionItems.push({ id: item.id, name: item.name, reasons: insight.reasons, status });
+    }
     return acc;
-  }, { used: 0, free: 0, total: 0, enabled: 0, problemCount: 0 });
+  }, { used: 0, free: 0, total: 0, configured: 0, enabled: 0, ready: 0, problemCount: 0, attentionItems: [] });
   summary.usedPercent = summary.total ? (summary.used / summary.total) * 100 : 0;
   return summary;
 }
 
+function healthSummary(data) {
+  const storage = storageSummary(data.storage || []);
+  const heartbeats = data.recorder?.heartbeats || [];
+  const jobs = data.recorder?.active_jobs || [];
+  const cameras = data.cameras || [];
+  const alerts = data.openAlerts || [];
+  const recorderOnline = heartbeats.filter((row) => recorderStatusKind(row) === 'ok').length;
+  const enabledCameras = cameras.filter((camera) => camera.enabled).length;
+  const recordingCameras = cameras.filter((camera) => camera.enabled && camera.recording_enabled).length;
+  const streamingCameras = cameras.filter((camera) => camera.enabled && camera.stream_enabled !== false).length;
+  const backendOk = data.health?.status === 'ok' && data.health?.database === 'ok';
+  const errorAlerts = alerts.filter((alertItem) => alertItem.severity === 'error').length;
+  const storageProblems = storage.problemCount;
+  const storageNotReady = storage.problemCount;
+  let score = 100;
+  if (!backendOk) score -= 30;
+  if (heartbeats.length && !recorderOnline) score -= 25;
+  if (!heartbeats.length) score -= 15;
+  score -= Math.min(errorAlerts * 18, 36);
+  score -= Math.min(storageProblems * 12, 30);
+  score -= Math.min(storageNotReady * 16, 32);
+  if (enabledCameras && !recordingCameras) score -= 10;
+  score = Math.max(0, Math.min(100, score));
+
+  let tone = 'ok';
+  let title = 'System is healthy';
+  let message = 'Backend, database, storage, and recorder status look ready.';
+  if (score < 60 || errorAlerts || !backendOk) {
+    tone = 'error';
+    title = 'Attention required';
+    message = 'One or more critical services or alerts need action.';
+  } else if (score < 85 || alerts.length || storageProblems || storageNotReady || !recorderOnline) {
+    tone = 'warning';
+    title = 'Watch closely';
+    message = 'The system is usable, but there are warnings worth checking.';
+  }
+
+  return {
+    activeJobs: jobs.length,
+    enabledCameras,
+    message,
+    recordingCameras,
+    recorderOnline,
+    recorderTotal: heartbeats.length,
+    score,
+    storageFree: storage.free,
+    storageHealthy: storage.ready,
+    storageProblems,
+    storageTotal: storage.configured,
+    streamingCameras,
+    title,
+    tone,
+  };
+}
+
 function storageStatus(item) {
-  if (item.latest_validation_error || !item.exists || !item.writable || item.health_status === 'error') {
-    return { kind: 'error', badge: 'error', label: 'error' };
+  return storageInsights(item).status;
+}
+
+function storageInsights(item) {
+  const enabled = Boolean(item.is_enabled);
+  const used = Number(item.used_bytes || 0);
+  const detectedFree = Number(item.free_bytes || 0);
+  const detectedTotal = Number(item.total_bytes || used + detectedFree || 0);
+  const configuredLimit = Number(item.max_storage_bytes || 0);
+  const total = configuredLimit || detectedTotal;
+  const free = configuredLimit ? Math.max(0, configuredLimit - used) : detectedFree;
+  const usedPercent = total ? clampPercent((used / total) * 100) : clampPercent(item.used_percent);
+  const healthStatus = String(item.health_status || 'unknown').toLowerCase();
+  const reasons = [];
+  let status = { kind: 'ok', badge: 'ok', label: 'healthy' };
+
+  if (!enabled) {
+    return {
+      attention: false,
+      configuredLimit,
+      detectedTotal,
+      free,
+      reasons: ['Disabled by admin. This location is not available for new recording assignments.'],
+      status: { kind: 'muted', badge: 'muted', label: 'disabled' },
+      total,
+      used,
+      usedPercent,
+    };
   }
-  const usedPercent = clampPercent(item.used_percent);
-  if (item.health_status === 'warning' || usedPercent >= 90) {
-    return { kind: 'warning', badge: item.is_enabled ? 'warning' : 'muted', label: item.is_enabled ? 'warning' : 'disabled' };
+
+  if (!item.exists) reasons.push('Folder does not exist inside the backend container.');
+  if (!item.writable) reasons.push('Folder is not writable by the backend container.');
+  if (item.latest_validation_error) reasons.push(item.latest_validation_error);
+  if (healthStatus === 'unhealthy' || healthStatus === 'error') reasons.push(`Backend validation status is ${healthStatus}.`);
+  if (configuredLimit && used >= configuredLimit) reasons.push('Configured storage limit has been reached.');
+  if (usedPercent >= 90 && (!configuredLimit || used < configuredLimit)) reasons.push(`${usedPercent.toFixed(1)}% of ${configuredLimit ? 'configured limit' : 'detected disk capacity'} is used.`);
+
+  const hasError = !item.exists || !item.writable || Boolean(item.latest_validation_error) || healthStatus === 'unhealthy' || healthStatus === 'error' || (configuredLimit && used >= configuredLimit);
+  const hasWarning = healthStatus === 'warning' || usedPercent >= 90;
+  if (hasError) {
+    status = { kind: 'error', badge: 'error', label: 'error' };
+  } else if (hasWarning) {
+    status = { kind: 'warning', badge: 'warning', label: 'warning' };
   }
-  if (!item.is_enabled) {
-    return { kind: 'muted', badge: 'muted', label: 'disabled' };
+
+  if (reasons.length === 0) {
+    reasons.push('Enabled, folder exists, writable, and capacity is within limits.');
   }
-  return { kind: 'ok', badge: 'ok', label: item.health_status || 'healthy' };
+
+  return {
+    attention: status.kind === 'warning' || status.kind === 'error',
+    configuredLimit,
+    detectedTotal,
+    free,
+    reasons,
+    status,
+    total,
+    used,
+    usedPercent,
+  };
+}
+
+function recorderStatusText(row) {
+  const kind = recorderStatusKind(row);
+  if (kind === 'ok') return 'online';
+  if (kind === 'muted') return 'stopped';
+  return 'stale';
+}
+
+function humanizeKey(value) {
+  return String(value || 'unknown')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatRelativeTime(value) {
+  if (!value) return 'never';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return 'unknown';
+  const diffMs = date.getTime() - Date.now();
+  const absMs = Math.abs(diffMs);
+  const units = [
+    ['day', 86_400_000],
+    ['hour', 3_600_000],
+    ['minute', 60_000],
+    ['second', 1_000],
+  ];
+  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  for (const [unit, size] of units) {
+    if (absMs >= size || unit === 'second') {
+      return formatter.format(Math.round(diffMs / size), unit);
+    }
+  }
+  return date.toLocaleString();
 }
 
 function formatCameraRow(item) {

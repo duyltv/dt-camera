@@ -132,3 +132,24 @@ func TestCameraMediaFlagsMigrationAddsAudioAndStreamControls(t *testing.T) {
 		}
 	}
 }
+
+func TestStorageCapacityLimitMigrationAddsStorageMaxBytes(t *testing.T) {
+	migrations, err := LoadMigrations()
+	if err != nil {
+		t.Fatalf("LoadMigrations() error = %v", err)
+	}
+
+	var storageLimitMigration string
+	for _, migration := range migrations {
+		if migration.Name == "008_storage_capacity_limit.sql" {
+			storageLimitMigration = migration.SQL
+			break
+		}
+	}
+
+	for _, expected := range []string{"storage_locations", "max_storage_bytes", "storage_locations_max_storage_bytes_check"} {
+		if !strings.Contains(storageLimitMigration, expected) {
+			t.Fatalf("storage limit migration should include %s", expected)
+		}
+	}
+}

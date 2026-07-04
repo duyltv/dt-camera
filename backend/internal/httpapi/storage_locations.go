@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ type storageLocationResponse struct {
 	FreeBytes             int64      `json:"free_bytes"`
 	UsedBytes             int64      `json:"used_bytes"`
 	UsedPercent           float64    `json:"used_percent"`
+	MaxStorageBytes       *int64     `json:"max_storage_bytes,omitempty"`
 	LatestValidationError *string    `json:"latest_validation_error,omitempty"`
 	LastCheckedAt         *time.Time `json:"last_checked_at,omitempty"`
 	CreatedAt             time.Time  `json:"created_at"`
@@ -26,15 +28,17 @@ type storageLocationResponse struct {
 }
 
 type createStorageLocationRequest struct {
-	Name          string `json:"name"`
-	ContainerPath string `json:"container_path"`
-	Enabled       *bool  `json:"enabled,omitempty"`
+	Name            string `json:"name"`
+	ContainerPath   string `json:"container_path"`
+	Enabled         *bool  `json:"enabled,omitempty"`
+	MaxStorageBytes *int64 `json:"max_storage_bytes,omitempty"`
 }
 
 type updateStorageLocationRequest struct {
-	Name          *string `json:"name,omitempty"`
-	ContainerPath *string `json:"container_path,omitempty"`
-	Enabled       *bool   `json:"enabled,omitempty"`
+	Name            *string         `json:"name,omitempty"`
+	ContainerPath   *string         `json:"container_path,omitempty"`
+	Enabled         *bool           `json:"enabled,omitempty"`
+	MaxStorageBytes json.RawMessage `json:"max_storage_bytes,omitempty"`
 }
 
 type setEnabledRequest struct {
@@ -118,6 +122,10 @@ func (s *Server) createStorageLocation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "validation_error", "name is required", nil)
 		return
 	}
+	if req.MaxStorageBytes != nil && *req.MaxStorageBytes <= 0 {
+		writeError(w, http.StatusBadRequest, "validation_error", "max_storage_bytes must be greater than zero", nil)
+		return
+	}
 
 	validation := validateStoragePath(containerPath)
 	if !validation.Valid {
@@ -128,13 +136,14 @@ func (s *Server) createStorageLocation(w http.ResponseWriter, r *http.Request) {
 	row := s.db.QueryRowContext(r.Context(), `
 		INSERT INTO storage_locations (
 			name, container_path, is_enabled, health_status, exists, writable,
-			total_bytes, free_bytes, used_bytes, used_percent, latest_validation_error, last_checked_at
+			total_bytes, free_bytes, used_bytes, used_percent, max_storage_bytes,
+			latest_validation_error, last_checked_at
 		)
-		VALUES ($1, $2, $3, 'ok', $4, $5, $6, $7, $8, $9, NULL, now())
+		VALUES ($1, $2, $3, 'ok', $4, $5, $6, $7, $8, $9, $10, NULL, now())
 		RETURNING id, name, container_path, is_enabled, health_status, exists, writable,
-			total_bytes, free_bytes, used_bytes, used_percent, latest_validation_error,
+			total_bytes, free_bytes, used_bytes, used_percent, max_storage_bytes, latest_validation_error,
 			last_checked_at, created_at, updated_at
-	`, name, containerPath, enabled, validation.Exists, validation.Writable, int64(validation.TotalBytes), int64(validation.FreeBytes), int64(validation.UsedBytes), validation.UsedPercent)
+	`, name, containerPath, enabled, validation.Exists, validation.Writable, int64(validation.TotalBytes), int64(validation.FreeBytes), int64(validation.UsedBytes), validation.UsedPercent, nullableInt64(req.MaxStorageBytes))
 
 	location, err := scanStorageLocation(row)
 	if err != nil {
@@ -149,7 +158,7 @@ func (s *Server) createStorageLocation(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listStorageLocations(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, name, container_path, is_enabled, health_status, exists, writable,
-			total_bytes, free_bytes, used_bytes, used_percent, latest_validation_error,
+			total_bytes, free_bytes, used_bytes, used_percent, max_storage_bytes, latest_validation_error,
 			last_checked_at, created_at, updated_at
 		FROM storage_locations
 		ORDER BY name
@@ -222,6 +231,27 @@ func (s *Server) updateStorageLocation(w http.ResponseWriter, r *http.Request, i
 			shouldValidate = true
 		}
 	}
+	maxStorageBytes := current.MaxStorageBytes
+	if req.MaxStorageBytes != nil {
+		if string(req.MaxStorageBytes) == "null" {
+			maxStorageBytes = nil
+		} else {
+			var value int64
+			if err := json.Unmarshal(req.MaxStorageBytes, &value); err != nil {
+				writeError(w, http.StatusBadRequest, "validation_error", "max_storage_bytes must be a number or null", nil)
+				return
+			}
+			if value <= 0 {
+				writeError(w, http.StatusBadRequest, "validation_error", "max_storage_bytes must be greater than zero", nil)
+				return
+			}
+			maxStorageBytes = &value
+		}
+	}
+	if maxStorageBytes != nil && *maxStorageBytes <= 0 {
+		writeError(w, http.StatusBadRequest, "validation_error", "max_storage_bytes must be greater than zero", nil)
+		return
+	}
 
 	healthStatus := current.HealthStatus
 	lastCheckedAt := current.LastCheckedAt
@@ -255,12 +285,12 @@ func (s *Server) updateStorageLocation(w http.ResponseWriter, r *http.Request, i
 		SET name = $2, container_path = $3, is_enabled = $4, health_status = $5,
 			exists = $6, writable = $7, total_bytes = $8, free_bytes = $9,
 			used_bytes = $10, used_percent = $11, latest_validation_error = NULL,
-			last_checked_at = $12
+			last_checked_at = $12, max_storage_bytes = $13
 		WHERE id = $1
 		RETURNING id, name, container_path, is_enabled, health_status, exists, writable,
-			total_bytes, free_bytes, used_bytes, used_percent, latest_validation_error,
+			total_bytes, free_bytes, used_bytes, used_percent, max_storage_bytes, latest_validation_error,
 			last_checked_at, created_at, updated_at
-	`, id, name, containerPath, enabled, healthStatus, exists, writable, totalBytes, freeBytes, usedBytes, usedPercent, lastCheckedAt)
+	`, id, name, containerPath, enabled, healthStatus, exists, writable, totalBytes, freeBytes, usedBytes, usedPercent, lastCheckedAt, nullableInt64(maxStorageBytes))
 
 	location, err := scanStorageLocation(row)
 	if err != nil {
@@ -325,7 +355,7 @@ func (s *Server) setStorageLocationEnabled(w http.ResponseWriter, r *http.Reques
 			latest_validation_error = NULL, last_checked_at = $10
 		WHERE id = $1
 		RETURNING id, name, container_path, is_enabled, health_status, exists, writable,
-			total_bytes, free_bytes, used_bytes, used_percent, latest_validation_error,
+			total_bytes, free_bytes, used_bytes, used_percent, max_storage_bytes, latest_validation_error,
 			last_checked_at, created_at, updated_at
 	`, id, req.Enabled, healthStatus, exists, writable, totalBytes, freeBytes, usedBytes, usedPercent, lastCheckedAt)
 
@@ -386,7 +416,7 @@ func (s *Server) deleteStorageLocation(w http.ResponseWriter, r *http.Request, i
 func (s *Server) findStorageLocation(r *http.Request, id string) (storageLocationResponse, error) {
 	row := s.db.QueryRowContext(r.Context(), `
 		SELECT id, name, container_path, is_enabled, health_status, exists, writable,
-			total_bytes, free_bytes, used_bytes, used_percent, latest_validation_error,
+			total_bytes, free_bytes, used_bytes, used_percent, max_storage_bytes, latest_validation_error,
 			last_checked_at, created_at, updated_at
 		FROM storage_locations
 		WHERE id = $1
@@ -423,7 +453,7 @@ func (s *Server) updateStorageHealth(r *http.Request, id, containerPath string, 
 			latest_validation_error = NULLIF($9, ''), last_checked_at = $10
 		WHERE id = $1
 		RETURNING id, name, container_path, is_enabled, health_status, exists, writable,
-			total_bytes, free_bytes, used_bytes, used_percent, latest_validation_error,
+			total_bytes, free_bytes, used_bytes, used_percent, max_storage_bytes, latest_validation_error,
 			last_checked_at, created_at, updated_at
 	`, id, status, validation.Exists, validation.Writable, int64(validation.TotalBytes), int64(validation.FreeBytes), int64(validation.UsedBytes), validation.UsedPercent, validation.LatestValidationError, checkedAt)
 	return scanStorageLocation(row)
@@ -437,6 +467,7 @@ func scanStorageLocation(scanner storageLocationScanner) (storageLocationRespons
 	var location storageLocationResponse
 	var lastCheckedAt sql.NullTime
 	var latestValidationError sql.NullString
+	var maxStorageBytes sql.NullInt64
 	if err := scanner.Scan(
 		&location.ID,
 		&location.Name,
@@ -449,6 +480,7 @@ func scanStorageLocation(scanner storageLocationScanner) (storageLocationRespons
 		&location.FreeBytes,
 		&location.UsedBytes,
 		&location.UsedPercent,
+		&maxStorageBytes,
 		&latestValidationError,
 		&lastCheckedAt,
 		&location.CreatedAt,
@@ -461,6 +493,9 @@ func scanStorageLocation(scanner storageLocationScanner) (storageLocationRespons
 	}
 	if latestValidationError.Valid {
 		location.LatestValidationError = &latestValidationError.String
+	}
+	if maxStorageBytes.Valid {
+		location.MaxStorageBytes = &maxStorageBytes.Int64
 	}
 	return location, nil
 }

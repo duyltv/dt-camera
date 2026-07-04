@@ -29,6 +29,11 @@ Create a local environment file:
 cp .env.example .env
 ```
 
+Before the first run, open `.env` and set `BOOTSTRAP_ADMIN_EMAIL` and
+`BOOTSTRAP_ADMIN_PASSWORD` to create the first admin user. Without these values
+there are no default credentials, so you will not be able to sign in to the UI.
+After the stack starts, use that email/password at `http://127.0.0.1:8088/login`.
+
 The default recording folder is `./data/recordings`. It is mounted into the
 backend and recorder containers at `/recordings`.
 
@@ -164,7 +169,9 @@ docker compose up --build
 ## Authentication
 
 Create the first admin by setting explicit bootstrap environment variables before
-starting the backend. No default credentials are created automatically.
+starting the backend. No default credentials are created automatically. For the
+normal Docker Compose flow, put these values in `.env` before `docker compose up
+--build`, then log in through the UI at `http://127.0.0.1:8088/login`.
 
 ```sh
 BOOTSTRAP_ADMIN_EMAIL=admin@example.com
