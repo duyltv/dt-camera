@@ -129,16 +129,22 @@ func (j *recordingJob) runFFmpeg(ctx context.Context) error {
 	args := []string{
 		"-hide_banner",
 		"-loglevel", "warning",
+		"-fflags", "+genpts",
+		"-use_wallclock_as_timestamps", "1",
 		"-rtsp_transport", "tcp",
 		"-i", j.camera.RTSPURL,
+		"-map", "0:v:0",
 		"-c:v", "copy",
 	}
 	if j.camera.RecordAudio {
-		args = append(args, "-c:a", "aac", "-b:a", "96k")
+		args = append(args, "-map", "0:a:0?", "-c:a", "aac", "-b:a", "96k", "-af", "aresample=async=1:first_pts=0")
 	} else {
 		args = append(args, "-an")
 	}
 	args = append(args,
+		"-max_interleave_delta", "0",
+		"-muxdelay", "0",
+		"-avoid_negative_ts", "make_zero",
 		"-f", "segment",
 		"-segment_time", fmt.Sprintf("%d", j.segmentSeconds),
 		"-reset_timestamps", "1",

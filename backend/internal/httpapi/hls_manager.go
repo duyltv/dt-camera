@@ -90,16 +90,22 @@ func (m *hlsManager) ensureStream(ctx context.Context, camera liveCamera) (strin
 	args := []string{
 		"-hide_banner",
 		"-loglevel", "warning",
+		"-fflags", "+genpts",
+		"-use_wallclock_as_timestamps", "1",
 		"-rtsp_transport", "tcp",
 		"-i", camera.RTSPURL,
+		"-map", "0:v:0",
 		"-c:v", "copy",
 	}
 	if camera.StreamAudio {
-		args = append(args, "-c:a", "aac", "-b:a", "64k")
+		args = append(args, "-map", "0:a:0?", "-c:a", "aac", "-b:a", "64k", "-af", "aresample=async=1:first_pts=0")
 	} else {
 		args = append(args, "-an")
 	}
 	args = append(args,
+		"-max_interleave_delta", "0",
+		"-muxdelay", "0",
+		"-avoid_negative_ts", "make_zero",
 		"-f", "hls",
 		"-hls_time", "2",
 		"-hls_list_size", "6",
