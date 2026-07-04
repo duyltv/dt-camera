@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -40,18 +41,18 @@ type createCameraRequest struct {
 }
 
 type updateCameraRequest struct {
-	Name              *string `json:"name,omitempty"`
-	RTSPURL           *string `json:"rtsp_url,omitempty"`
-	StorageLocationID *string `json:"storage_location_id,omitempty"`
-	Location          *string `json:"location,omitempty"`
-	CameraGroup       *string `json:"camera_group,omitempty"`
-	Enabled           *bool   `json:"enabled,omitempty"`
-	RecordingEnabled  *bool   `json:"recording_enabled,omitempty"`
-	RecordAudio       *bool   `json:"record_audio,omitempty"`
-	StreamEnabled     *bool   `json:"stream_enabled,omitempty"`
-	StreamAudio       *bool   `json:"stream_audio,omitempty"`
-	RetentionDays     *int    `json:"retention_days,omitempty"`
-	MaxStorageBytes   *int64  `json:"max_storage_bytes,omitempty"`
+	Name              *string         `json:"name,omitempty"`
+	RTSPURL           *string         `json:"rtsp_url,omitempty"`
+	StorageLocationID *string         `json:"storage_location_id,omitempty"`
+	Location          *string         `json:"location,omitempty"`
+	CameraGroup       *string         `json:"camera_group,omitempty"`
+	Enabled           *bool           `json:"enabled,omitempty"`
+	RecordingEnabled  *bool           `json:"recording_enabled,omitempty"`
+	RecordAudio       *bool           `json:"record_audio,omitempty"`
+	StreamEnabled     *bool           `json:"stream_enabled,omitempty"`
+	StreamAudio       *bool           `json:"stream_audio,omitempty"`
+	RetentionDays     *int            `json:"retention_days,omitempty"`
+	MaxStorageBytes   json.RawMessage `json:"max_storage_bytes,omitempty"`
 }
 
 func (s *Server) handleCameras(w http.ResponseWriter, r *http.Request) {
@@ -347,13 +348,10 @@ func (s *Server) updateCamera(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 	maxStorageBytes := current.MaxStorageBytes
-	if req.MaxStorageBytes != nil {
-		if *req.MaxStorageBytes <= 0 {
-			writeError(w, http.StatusBadRequest, "validation_error", "max_storage_bytes must be greater than zero", nil)
-			return
-		}
-		value := *req.MaxStorageBytes
-		maxStorageBytes = &value
+	maxStorageBytes, err = parseNullablePositiveInt64(maxStorageBytes, req.MaxStorageBytes, "max_storage_bytes")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error(), nil)
+		return
 	}
 
 	row := s.db.QueryRowContext(r.Context(), `
@@ -625,4 +623,22 @@ func nullableInt64(value *int64) any {
 		return nil
 	}
 	return *value
+}
+
+func parseNullablePositiveInt64(current *int64, raw json.RawMessage, field string) (*int64, error) {
+	if raw == nil {
+		return current, nil
+	}
+	if string(raw) == "null" {
+		return nil, nil
+	}
+
+	var value int64
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, errValidation(field + " must be a number or null")
+	}
+	if value <= 0 {
+		return nil, errValidation(field + " must be greater than zero")
+	}
+	return &value, nil
 }

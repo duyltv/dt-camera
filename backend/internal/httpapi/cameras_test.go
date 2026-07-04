@@ -56,3 +56,39 @@ func TestDefaultRecordingEnabled(t *testing.T) {
 		})
 	}
 }
+
+func TestParseNullablePositiveInt64SupportsClearingCameraLimit(t *testing.T) {
+	current := int64(1024)
+
+	kept, err := parseNullablePositiveInt64(&current, nil, "max_storage_bytes")
+	if err != nil {
+		t.Fatalf("omitted value returned error: %v", err)
+	}
+	if kept == nil || *kept != current {
+		t.Fatalf("omitted value should keep current limit, got %v", kept)
+	}
+
+	cleared, err := parseNullablePositiveInt64(&current, json.RawMessage(`null`), "max_storage_bytes")
+	if err != nil {
+		t.Fatalf("null value returned error: %v", err)
+	}
+	if cleared != nil {
+		t.Fatalf("null value should clear current limit, got %d", *cleared)
+	}
+
+	updated, err := parseNullablePositiveInt64(&current, json.RawMessage(`2048`), "max_storage_bytes")
+	if err != nil {
+		t.Fatalf("numeric value returned error: %v", err)
+	}
+	if updated == nil || *updated != 2048 {
+		t.Fatalf("numeric value should update limit to 2048, got %v", updated)
+	}
+}
+
+func TestParseNullablePositiveInt64RejectsInvalidCameraLimit(t *testing.T) {
+	for _, raw := range []json.RawMessage{json.RawMessage(`0`), json.RawMessage(`-1`), json.RawMessage(`"bad"`)} {
+		if _, err := parseNullablePositiveInt64(nil, raw, "max_storage_bytes"); err == nil {
+			t.Fatalf("expected error for %s", raw)
+		}
+	}
+}

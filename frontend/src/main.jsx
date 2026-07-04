@@ -2435,7 +2435,10 @@ function PlaybackPage() {
 }
 
 function PlaybackTimeline({ layout, cameras, timeline, selectedTime, resultLoaded, onSelect }) {
-  const [start, end] = dayBounds(selectedTime);
+  const [dayStart, dayEnd] = dayBounds(selectedTime);
+  const [visibleWindow, setVisibleWindow] = useState(() => timelineWindowForSelectedTime(selectedTime));
+  const start = visibleWindow.start;
+  const end = visibleWindow.end;
   const duration = end.getTime() - start.getTime();
   const playheadLeft = pct((selectedTime.getTime() - start.getTime()) / duration);
   const availability = new Map((timeline?.camera_availability || []).map((item) => [item.camera_id, item]));
@@ -2443,6 +2446,15 @@ function PlaybackTimeline({ layout, cameras, timeline, selectedTime, resultLoade
   const visibleCameraIDs = resultLoaded ? new Set(cameras.map((camera) => camera.camera_id)) : null;
   const items = (layout?.layout_items || []).filter((item) => item.camera_id && (!visibleCameraIDs || visibleCameraIDs.has(item.camera_id)));
   const hasRanges = (timeline?.camera_availability || []).some((item) => (item.ranges || []).length > 0);
+  const scaleLabels = timelineScaleLabels(start, end);
+
+  useEffect(() => {
+    setVisibleWindow((current) => {
+      const [currentDayStart, currentDayEnd] = dayBounds(current.start);
+      if (selectedTime >= currentDayStart && selectedTime < currentDayEnd) return current;
+      return timelineWindowForSelectedTime(selectedTime);
+    });
+  }, [selectedTime]);
 
   function selectFromEvent(event) {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -2450,17 +2462,33 @@ function PlaybackTimeline({ layout, cameras, timeline, selectedTime, resultLoade
     onSelect(new Date(start.getTime() + ratio * duration));
   }
 
+  function zoomFromWheel(event) {
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const anchorRatio = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1);
+    const anchorTime = start.getTime() + anchorRatio * duration;
+    const zoomFactor = event.deltaY < 0 ? 0.72 : 1.35;
+    setVisibleWindow((current) => zoomTimelineWindow(current, dayStart, dayEnd, anchorTime, anchorRatio, zoomFactor));
+  }
+
+  function resetZoom() {
+    setVisibleWindow({ start: dayStart, end: dayEnd });
+  }
+
   return (
     <section className="timeline-panel">
       <div className="timeline-header">
         <div>
           <strong>Recording timeline</strong>
-          <span>{formatDateTime(selectedTime)}</span>
+          <span>{formatDateTime(selectedTime)} · visible {formatTime(start)} - {formatTime(end)} ({formatTimelineDuration(duration)})</span>
         </div>
-        <span>{hasRanges ? 'Recorded ranges are highlighted' : 'No stored video on this day'}</span>
+        <div className="timeline-actions">
+          <span>{hasRanges ? 'Recorded ranges are highlighted' : 'No stored video on this day'}</span>
+          <button type="button" onClick={resetZoom}>Reset zoom</button>
+        </div>
       </div>
       <div className="timeline-scale">
-        {['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', '24:00'].map((label) => <span key={label}>{label}</span>)}
+        {scaleLabels.map((label) => <span key={label.value}>{label.text}</span>)}
       </div>
       <div className="timeline-stack">
         {items.map((item) => {
@@ -2469,7 +2497,14 @@ function PlaybackTimeline({ layout, cameras, timeline, selectedTime, resultLoade
           return (
             <div className="timeline-row" key={item.id || item.item_id || cameraID}>
               <span title={cameraNames.get(cameraID) || cameraID}>{cameraNames.get(cameraID) || shortID(cameraID)}</span>
-              <button className="timeline-track" type="button" onClick={selectFromEvent} aria-label={`Select playback time for ${cameraNames.get(cameraID) || cameraID}`}>
+              <button
+                className="timeline-track"
+                type="button"
+                onClick={selectFromEvent}
+                onWheel={zoomFromWheel}
+                aria-label={`Select playback time for ${cameraNames.get(cameraID) || cameraID}`}
+                title="Click to select time. Use mouse wheel over the bar to zoom around the pointer."
+              >
                 {(row.ranges || []).map((range, index) => (
                   <span
                     className="timeline-range"
@@ -2695,6 +2730,56 @@ function dayBounds(date) {
   return [start, end];
 }
 
+function timelineWindowForSelectedTime(date) {
+  const [start, end] = dayBounds(date);
+  return { start, end };
+}
+
+function zoomTimelineWindow(current, dayStart, dayEnd, anchorTime, anchorRatio, zoomFactor) {
+  const dayMin = dayStart.getTime();
+  const dayMax = dayEnd.getTime();
+  const dayDuration = dayMax - dayMin;
+  const currentDuration = current.end.getTime() - current.start.getTime();
+  const minDuration = 60 * 1000;
+  const nextDuration = Math.min(dayDuration, Math.max(minDuration, currentDuration * zoomFactor));
+  let nextStart = anchorTime - anchorRatio * nextDuration;
+  let nextEnd = nextStart + nextDuration;
+
+  if (nextStart < dayMin) {
+    nextStart = dayMin;
+    nextEnd = nextStart + nextDuration;
+  }
+  if (nextEnd > dayMax) {
+    nextEnd = dayMax;
+    nextStart = nextEnd - nextDuration;
+  }
+
+  return { start: new Date(nextStart), end: new Date(nextEnd) };
+}
+
+function timelineScaleLabels(start, end) {
+  const count = 7;
+  const min = start.getTime();
+  const max = end.getTime();
+  const step = (max - min) / (count - 1);
+  return Array.from({ length: count }, (_, index) => {
+    const value = new Date(min + step * index);
+    return { value: value.toISOString(), text: formatTime(value) };
+  });
+}
+
+function formatTime(value) {
+  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatTimelineDuration(ms) {
+  const minutes = Math.max(1, Math.round(ms / 60000));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = minutes / 60;
+  if (hours < 24) return `${Number(hours.toFixed(hours >= 10 ? 0 : 1))} hr`;
+  return '24 hr';
+}
+
 function pct(value) {
   if (!Number.isFinite(value)) return 0;
   return Math.min(Math.max(value * 100, 0), 100);
@@ -2706,6 +2791,7 @@ function rangeStyle(startValue, endValue, dayStart, dayEnd) {
   const min = dayStart.getTime();
   const max = dayEnd.getTime();
   const duration = max - min;
+  if (end < min || start > max) return { display: 'none' };
   const left = pct((Math.max(start, min) - min) / duration);
   const right = pct((Math.min(end, max) - min) / duration);
   return { left: `${left}%`, width: `${Math.max(right - left, 0.4)}%` };
