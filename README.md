@@ -40,6 +40,16 @@ It supports:
 
 The goal is simple: a practical, self-hosted camera system that stays easy to run, easy to understand, and easy to improve.
 
+## 💡 Why I Started This
+
+I tried many different camera systems, but every system came with its own pain point. Some were good at live view, some were better at recording, some had decent playback, and some had useful alerts, but I could not find one system that felt good enough across everything I needed.
+
+So I started **DT Camera**, with support from **Codex**, to build my own camera system around the workflows I actually want: simple setup, clear live view, reliable background recording, useful playback, practical permissions, and room to grow.
+
+For now, the whole project is free to use for personal and small non-commercial use, with the basic features every camera system should have. Later, DT Camera may grow into more advanced features, and some of those may live in a closed library or become part of a paid version.
+
+⭐ Follow and star the project to get the latest updates.
+
 ## 🔎 Transparency And License
 
 DT Camera is a **source-available, non-commercial project**.
