@@ -35,6 +35,7 @@ type Config struct {
 	HLSInactivitySeconds   int
 	HLSWarmEnabled         bool
 	HLSWarmInterval        time.Duration
+	HLSMaxLag              time.Duration
 	PreviewCacheRoot       string
 	LoginRateLimitPerKey   int
 	LoginRateLimitPerIP    int
@@ -60,6 +61,9 @@ func NewServer(recordingsPath string, db *sql.DB, cfg Config) *Server {
 	if cfg.HLSWarmInterval <= 0 {
 		cfg.HLSWarmInterval = 15 * time.Second
 	}
+	if cfg.HLSMaxLag <= 0 {
+		cfg.HLSMaxLag = 15 * time.Second
+	}
 	if cfg.PreviewCacheRoot == "" {
 		cfg.PreviewCacheRoot = "/tmp/dt-camera-previews"
 	}
@@ -84,7 +88,7 @@ func NewServer(recordingsPath string, db *sql.DB, cfg Config) *Server {
 	if cfg.RetentionInterval <= 0 {
 		cfg.RetentionInterval = 6 * time.Hour
 	}
-	manager := newHLSManager(db, cfg.HLSRoot, time.Duration(cfg.HLSInactivitySeconds)*time.Second, cfg.HLSWarmEnabled)
+	manager := newHLSManager(db, cfg.HLSRoot, time.Duration(cfg.HLSInactivitySeconds)*time.Second, cfg.HLSWarmEnabled, cfg.HLSMaxLag)
 	limiter := newLoginRateLimiter(
 		cfg.LoginRateLimitPerKey,
 		cfg.LoginRateLimitPerIP,

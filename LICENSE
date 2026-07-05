@@ -1,0 +1,37 @@
+DT Camera Source-Available Non-Commercial License
+
+Copyright (c) 2026 Duy Nguyen (duyltv)
+
+This software and its source code are made available for transparency,
+inspection, learning, and personal non-commercial use.
+
+Permission is granted, free of charge, to any person obtaining a copy of this
+software and associated documentation files (the "Software"), to clone, run,
+study, modify, and use the Software for personal, home, educational, or small
+non-commercial camera systems, subject to the conditions below.
+
+Commercial use is not permitted without prior written permission from Duy Nguyen
+(duyltv). Commercial use includes, but is not limited to:
+
+- selling, licensing, sublicensing, renting, or hosting the Software as a paid
+  product or service;
+- using the Software as part of a paid surveillance, security, monitoring,
+  installation, consulting, managed-service, or SaaS offering;
+- integrating the Software into a commercial product, appliance, service, or
+  platform;
+- using the Software to provide services to customers or third parties for
+  commercial benefit.
+
+Duy Nguyen (duyltv) owns and reserves all commercial rights in and to this
+codebase. Any commercial use without permission is forbidden and may violate the
+owner's intellectual property rights.
+
+Redistribution of the Software or modified versions must preserve this license
+notice and the copyright notice above.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT
+OWNER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

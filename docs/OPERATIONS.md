@@ -16,7 +16,7 @@ backing up, restoring, troubleshooting, and running DT Camera in production.
 ### Steps
 
 ```sh
-git clone https://github.com/your-org/dt-camera.git /opt/dt-camera
+git clone https://github.com/duyltv/dt-camera.git /opt/dt-camera
 cd /opt/dt-camera
 cp .env.example .env
 

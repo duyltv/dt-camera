@@ -136,7 +136,13 @@ function Shell() {
           if (event.target.closest?.('a')) setMenuOpen(false);
         }}
       >
-        <h1>DT Camera</h1>
+        <div className="brand-lockup sidebar-brand">
+          <img src="/dt-camera-logo.png" alt="" />
+          <div>
+            <strong>DT Camera</strong>
+            <span>Surveillance console</span>
+          </div>
+        </div>
         <p className="muted sidebar-tag">Signed in as {user.display_name}</p>
         <nav className="nav-group">
           <NavLink to="/" end>Home</NavLink>
@@ -168,18 +174,27 @@ function Shell() {
       />
       <main className="content">
         <header className="topbar">
-          <button
-            className="mobile-menu-button"
-            type="button"
-            aria-label="Open navigation menu"
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((value) => !value)}
-          >
-            <span />
-            <span />
-            <span />
-          </button>
-          <div>
+          <div className="topbar-left">
+            <button
+              className="mobile-menu-button"
+              type="button"
+              aria-label="Open navigation menu"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((value) => !value)}
+            >
+              <span />
+              <span />
+              <span />
+            </button>
+            <div className="brand-lockup topbar-brand" aria-hidden="true">
+              <img src="/dt-camera-logo.png" alt="" />
+              <div>
+                <strong>DT Camera</strong>
+                <span>Live security</span>
+              </div>
+            </div>
+          </div>
+          <div className="topbar-user">
             <strong>{user.display_name}</strong>
             <span>
               {user.email}
@@ -219,7 +234,13 @@ function LoginPage() {
   return (
     <main className="login-page">
       <form className="login-box" onSubmit={submit}>
-        <h1>DT Camera</h1>
+        <div className="brand-lockup login-brand">
+          <img src="/dt-camera-logo.png" alt="" />
+          <div>
+            <h1>DT Camera</h1>
+            <span>Surveillance console</span>
+          </div>
+        </div>
         <p className="muted">Sign in with your email or username.</p>
         <label>Login<input autoFocus value={form.login} onChange={(e) => setForm({ ...form, login: e.target.value })} disabled={busy} /></label>
         <label>Password<input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} disabled={busy} /></label>
@@ -3145,7 +3166,22 @@ function VideoPlayer({ src, offsetSeconds = 0, controlled = false, register, pla
       const hls = new Hls({ xhrSetup: (xhr) => { xhr.withCredentials = true; } });
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data?.fatal) {
-          setPlaybackError(`Live stream error: ${data.details || data.type || 'unavailable'}.`);
+          setPlaybackError(`Live stream recovering: ${data.details || data.type || 'unavailable'}.`);
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            hls.startLoad();
+            return;
+          }
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            hls.recoverMediaError();
+            return;
+          }
+          hls.destroy();
+          window.setTimeout(() => {
+            if (video.isConnected) {
+              video.load();
+              video.play().catch(() => {});
+            }
+          }, 1000);
         }
       });
       hls.loadSource(url);

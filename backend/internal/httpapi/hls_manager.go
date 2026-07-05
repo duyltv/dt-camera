@@ -43,6 +43,7 @@ type hlsManager struct {
 	root       string
 	inactivity time.Duration
 	alwaysWarm bool
+	maxLag     time.Duration
 	mu         sync.Mutex
 	streams    map[string]*hlsStream
 }
@@ -54,14 +55,19 @@ type hlsStream struct {
 	cancel   context.CancelFunc
 	started  time.Time
 	lastUsed time.Time
+	restarts int
 }
 
-func newHLSManager(db *sql.DB, root string, inactivity time.Duration, alwaysWarm bool) *hlsManager {
+func newHLSManager(db *sql.DB, root string, inactivity time.Duration, alwaysWarm bool, maxLag time.Duration) *hlsManager {
+	if maxLag <= 0 {
+		maxLag = 15 * time.Second
+	}
 	return &hlsManager{
 		db:         db,
 		root:       root,
 		inactivity: inactivity,
 		alwaysWarm: alwaysWarm,
+		maxLag:     maxLag,
 		streams:    make(map[string]*hlsStream),
 	}
 }
@@ -73,7 +79,20 @@ func (m *hlsManager) ensureStream(ctx context.Context, camera liveCamera) (strin
 	if stream, ok := m.streams[camera.ID]; ok && stream.cmd.Process != nil {
 		if stream.config == camera.hlsConfigKey() {
 			stream.lastUsed = time.Now()
-			return "/hls/" + camera.ID + "/index.m3u8", nil
+			playlist := filepath.Join(m.root, camera.ID, "index.m3u8")
+			if fresh, lag := hlsPlaylistFresh(playlist, m.maxLag); fresh || time.Since(stream.started) < m.maxLag {
+				return hlsURLForStream(camera.ID, stream), nil
+			} else {
+				log.Printf("hls stream restarting camera_id=%s camera_name=%q reason=stale lag=%s max_lag=%s", camera.ID, camera.Name, lag, m.maxLag)
+				_ = insertSystemEvent(ctx, m.db, eventRecord{
+					EventType:  "live.restart",
+					EntityType: "camera",
+					EntityID:   &camera.ID,
+					Severity:   "warning",
+					Message:    "live stream restarted because HLS output was stale",
+					Metadata:   map[string]any{"camera_name": camera.Name, "lag_seconds": lag.Seconds(), "max_lag_seconds": m.maxLag.Seconds()},
+				})
+			}
 		}
 		delete(m.streams, camera.ID)
 		stopHLSProcess(stream)
@@ -145,11 +164,11 @@ func (m *hlsManager) ensureStream(ctx context.Context, camera liveCamera) (strin
 		}
 	}()
 
-	return "/hls/" + camera.ID + "/index.m3u8", nil
+	return hlsURLForStream(camera.ID, stream), nil
 }
 
 func (m *hlsManager) streamReady(cameraID string) bool {
-	return hlsPlaylistReady(filepath.Join(m.root, cameraID, "index.m3u8"))
+	return hlsPlaylistReady(filepath.Join(m.root, cameraID, "index.m3u8")) && m.streamFresh(cameraID)
 }
 
 func (m *hlsManager) waitReady(ctx context.Context, cameraID string, timeout time.Duration) bool {
@@ -198,6 +217,59 @@ func hlsPlaylistReady(playlist string) bool {
 		}
 	}
 	return false
+}
+
+func hlsURLForStream(cameraID string, stream *hlsStream) string {
+	version := stream.started.UnixNano()
+	if stream.restarts > 0 {
+		version += int64(stream.restarts)
+	}
+	return fmt.Sprintf("/hls/%s/index.m3u8?v=%d", cameraID, version)
+}
+
+func (m *hlsManager) streamFresh(cameraID string) bool {
+	m.mu.Lock()
+	stream := m.streams[cameraID]
+	m.mu.Unlock()
+	if stream != nil && time.Since(stream.started) < m.maxLag {
+		return true
+	}
+	fresh, _ := hlsPlaylistFresh(filepath.Join(m.root, cameraID, "index.m3u8"), m.maxLag)
+	return fresh
+}
+
+func hlsPlaylistFresh(playlist string, maxLag time.Duration) (bool, time.Duration) {
+	latest, ok := latestHLSSegmentModTime(playlist)
+	if !ok {
+		return false, maxLag + time.Second
+	}
+	lag := time.Since(latest)
+	return lag <= maxLag, lag
+}
+
+func latestHLSSegmentModTime(playlist string) (time.Time, bool) {
+	data, err := os.ReadFile(playlist)
+	if err != nil {
+		return time.Time{}, false
+	}
+	var latest time.Time
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasSuffix(line, ".ts") {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(filepath.Dir(playlist), line))
+		if err != nil {
+			continue
+		}
+		if latest.IsZero() || info.ModTime().After(latest) {
+			latest = info.ModTime()
+		}
+	}
+	if latest.IsZero() {
+		return time.Time{}, false
+	}
+	return latest, true
 }
 
 func (m *hlsManager) touch(cameraID string) {
