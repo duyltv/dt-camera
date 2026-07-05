@@ -51,7 +51,7 @@ func main() {
 		HLSInactivitySeconds:   getenvInt("HLS_INACTIVITY_SECONDS", 60),
 		HLSWarmEnabled:         getenvBool("HLS_WARM_ENABLED", true),
 		HLSWarmInterval:        getenvDuration("HLS_WARM_INTERVAL_SECONDS", 15*time.Second),
-		HLSMaxLag:              getenvDuration("HLS_MAX_LAG_SECONDS", 15*time.Second),
+		HLSMaxLag:              getenvDuration("HLS_MAX_LAG_SECONDS", 30*time.Second),
 		PreviewCacheRoot:       getenv("PREVIEW_CACHE_ROOT", "/tmp/dt-camera-previews"),
 		LoginRateLimitPerKey:   getenvInt("LOGIN_RATE_LIMIT_PER_KEY", 10),
 		LoginRateLimitPerIP:    getenvInt("LOGIN_RATE_LIMIT_PER_IP", 50),

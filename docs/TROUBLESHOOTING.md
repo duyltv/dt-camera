@@ -84,7 +84,7 @@ Useful settings:
 ```env
 HLS_WARM_ENABLED=true
 HLS_WARM_INTERVAL_SECONDS=15s
-HLS_MAX_LAG_SECONDS=15s
+HLS_MAX_LAG_SECONDS=30s
 ```
 
 If only one camera fails, verify the camera RTSP URL, credentials, network, and

@@ -62,7 +62,7 @@ func NewServer(recordingsPath string, db *sql.DB, cfg Config) *Server {
 		cfg.HLSWarmInterval = 15 * time.Second
 	}
 	if cfg.HLSMaxLag <= 0 {
-		cfg.HLSMaxLag = 15 * time.Second
+		cfg.HLSMaxLag = 30 * time.Second
 	}
 	if cfg.PreviewCacheRoot == "" {
 		cfg.PreviewCacheRoot = "/tmp/dt-camera-previews"
