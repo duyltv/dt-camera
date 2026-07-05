@@ -26,6 +26,7 @@ type notificationRuleResponse struct {
 	NotificationChannelID string    `json:"notification_channel_id"`
 	CameraID              *string   `json:"camera_id,omitempty"`
 	CooldownSeconds       int       `json:"cooldown_seconds"`
+	MessageTemplate       string    `json:"message_template"`
 	AttachImage           bool      `json:"attach_image"`
 	AttachVideo           bool      `json:"attach_video"`
 	PreEventSeconds       int       `json:"pre_event_seconds"`
@@ -49,6 +50,7 @@ type notificationRuleRequest struct {
 	NotificationChannelID string  `json:"notification_channel_id"`
 	CameraID              *string `json:"camera_id,omitempty"`
 	CooldownSeconds       *int    `json:"cooldown_seconds,omitempty"`
+	MessageTemplate       string  `json:"message_template,omitempty"`
 	AttachImage           *bool   `json:"attach_image,omitempty"`
 	AttachVideo           *bool   `json:"attach_video,omitempty"`
 	PreEventSeconds       *int    `json:"pre_event_seconds,omitempty"`
@@ -265,7 +267,7 @@ func (s *Server) deleteNotificationChannel(w http.ResponseWriter, r *http.Reques
 func (s *Server) listNotificationRules(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, name, event_type, enabled, notification_channel_id, camera_id,
-			cooldown_seconds, attach_image, attach_video, pre_event_seconds,
+			cooldown_seconds, message_template, attach_image, attach_video, pre_event_seconds,
 			post_event_seconds, video_fps, created_at, updated_at
 		FROM notification_rules
 		ORDER BY name
@@ -295,13 +297,13 @@ func (s *Server) createNotificationRule(w http.ResponseWriter, r *http.Request) 
 	row := s.db.QueryRowContext(r.Context(), `
 		INSERT INTO notification_rules (
 			name, event_type, enabled, notification_channel_id, camera_id, cooldown_seconds,
-			attach_image, attach_video, pre_event_seconds, post_event_seconds, video_fps
+			message_template, attach_image, attach_video, pre_event_seconds, post_event_seconds, video_fps
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id, name, event_type, enabled, notification_channel_id, camera_id,
-			cooldown_seconds, attach_image, attach_video, pre_event_seconds,
+			cooldown_seconds, message_template, attach_image, attach_video, pre_event_seconds,
 			post_event_seconds, video_fps, created_at, updated_at
-	`, req.Name, req.EventType, boolPtrValue(req.Enabled, true), req.NotificationChannelID, nullableString(req.CameraID), intPtrValue(req.CooldownSeconds, 300), boolPtrValue(req.AttachImage, true), boolPtrValue(req.AttachVideo, true), intPtrValue(req.PreEventSeconds, 7), intPtrValue(req.PostEventSeconds, 3), intPtrValue(req.VideoFPS, 4))
+	`, req.Name, req.EventType, boolPtrValue(req.Enabled, true), req.NotificationChannelID, nullableString(req.CameraID), intPtrValue(req.CooldownSeconds, 300), normalizeMessageTemplate(req.MessageTemplate), boolPtrValue(req.AttachImage, true), boolPtrValue(req.AttachVideo, true), intPtrValue(req.PreEventSeconds, 7), intPtrValue(req.PostEventSeconds, 3), intPtrValue(req.VideoFPS, 4))
 	item, err := scanNotificationRule(row)
 	if err != nil {
 		writeDBError(w, err)
@@ -358,16 +360,20 @@ func (s *Server) updateNotificationRule(w http.ResponseWriter, r *http.Request, 
 	if req.VideoFPS != nil {
 		videoFPS = *req.VideoFPS
 	}
+	messageTemplate := current.MessageTemplate
+	if strings.TrimSpace(req.MessageTemplate) != "" {
+		messageTemplate = normalizeMessageTemplate(req.MessageTemplate)
+	}
 	row := s.db.QueryRowContext(r.Context(), `
 		UPDATE notification_rules
 		SET name = $2, event_type = $3, enabled = $4, notification_channel_id = $5,
-			camera_id = $6, cooldown_seconds = $7, attach_image = $8, attach_video = $9,
-			pre_event_seconds = $10, post_event_seconds = $11, video_fps = $12
+			camera_id = $6, cooldown_seconds = $7, message_template = $8, attach_image = $9, attach_video = $10,
+			pre_event_seconds = $11, post_event_seconds = $12, video_fps = $13
 		WHERE id = $1
 		RETURNING id, name, event_type, enabled, notification_channel_id, camera_id,
-			cooldown_seconds, attach_image, attach_video, pre_event_seconds,
+			cooldown_seconds, message_template, attach_image, attach_video, pre_event_seconds,
 			post_event_seconds, video_fps, created_at, updated_at
-	`, id, req.Name, req.EventType, enabled, req.NotificationChannelID, nullableString(req.CameraID), cooldownSeconds, attachImage, attachVideo, preEventSeconds, postEventSeconds, videoFPS)
+	`, id, req.Name, req.EventType, enabled, req.NotificationChannelID, nullableString(req.CameraID), cooldownSeconds, messageTemplate, attachImage, attachVideo, preEventSeconds, postEventSeconds, videoFPS)
 	item, err := scanNotificationRule(row)
 	if err != nil {
 		writeDBError(w, err)
@@ -464,7 +470,7 @@ func (s *Server) findNotificationChannelRaw(r *http.Request, id string) (notific
 func (s *Server) findNotificationRule(r *http.Request, id string) (notificationRuleResponse, error) {
 	row := s.db.QueryRowContext(r.Context(), `
 		SELECT id, name, event_type, enabled, notification_channel_id, camera_id,
-			cooldown_seconds, attach_image, attach_video, pre_event_seconds,
+			cooldown_seconds, message_template, attach_image, attach_video, pre_event_seconds,
 			post_event_seconds, video_fps, created_at, updated_at
 		FROM notification_rules
 		WHERE id = $1
@@ -494,6 +500,7 @@ func scanNotificationRule(scanner interface{ Scan(dest ...any) error }) (notific
 		&item.NotificationChannelID,
 		&cameraID,
 		&item.CooldownSeconds,
+		&item.MessageTemplate,
 		&item.AttachImage,
 		&item.AttachVideo,
 		&item.PreEventSeconds,
@@ -508,6 +515,14 @@ func scanNotificationRule(scanner interface{ Scan(dest ...any) error }) (notific
 		item.CameraID = &cameraID.String
 	}
 	return item, nil
+}
+
+func normalizeMessageTemplate(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "Motion detected on {{camera_name}}\nTime: {{event_time}}\nScore: {{score}}"
+	}
+	return value
 }
 
 func validateNotificationChannelConfig(method string, config map[string]any) error {

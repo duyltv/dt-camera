@@ -88,6 +88,7 @@ function App() {
             <Route path="users" element={<AdminOnly><UsersPage /></AdminOnly>} />
             <Route path="permissions" element={<AdminOnly><PermissionsPage /></AdminOnly>} />
             <Route path="health" element={<AdminOnly><HealthDashboardPage /></AdminOnly>} />
+            <Route path="notifications" element={<AdminOnly><NotificationsPage /></AdminOnly>} />
             <Route path="alerts" element={<AdminOnly><AlertsPage /></AdminOnly>} />
             <Route path="layouts" element={<AdminOnly><LayoutsPage /></AdminOnly>} />
             <Route path="live" element={<LiveLayoutPage />} />
@@ -154,6 +155,7 @@ function Shell() {
             <NavLink to="/users">Users</NavLink>
             <NavLink to="/permissions">Permissions</NavLink>
             <NavLink to="/health">Health</NavLink>
+            <NavLink to="/notifications">Notifications</NavLink>
             <NavLink to="/alerts">Alerts</NavLink>
           </nav>
         )}
@@ -3597,6 +3599,217 @@ const alertRuleTypeOptions = [
   { value: 'storage_low_disk', label: 'Storage low disk' },
   { value: 'live_stream_failed', label: 'Live stream failed' },
 ];
+
+function NotificationsPage() {
+  const [channels, setChannels] = useState([]);
+  const [rules, setRules] = useState([]);
+  const [cameras, setCameras] = useState([]);
+  const [channelForm, setChannelForm] = useState({ name: '', bot_token: '', chat_id: '', enabled: true });
+  const [ruleForm, setRuleForm] = useState({
+    name: 'Motion to Telegram',
+    notification_channel_id: '',
+    camera_id: '',
+    cooldown_seconds: 300,
+    message_template: 'Motion detected on {{camera_name}}\nTime: {{event_time}}\nScore: {{score}}',
+    attach_image: true,
+    attach_video: true,
+    pre_event_seconds: 7,
+    post_event_seconds: 3,
+    video_fps: 4,
+    enabled: true,
+  });
+  const [actionError, setActionError] = useState('');
+  const { loading, error, run } = useLoader(load);
+
+  async function load() {
+    const [channelsData, rulesData, camerasData] = await Promise.all([
+      api('/api/notification-channels'),
+      api('/api/notification-rules'),
+      api('/api/cameras'),
+    ]);
+    const nextChannels = channelsData.notification_channels || [];
+    setChannels(nextChannels);
+    setRules(rulesData.notification_rules || []);
+    setCameras(camerasData.cameras || []);
+    setRuleForm((current) => (
+      current.notification_channel_id || !nextChannels.length
+        ? current
+        : { ...current, notification_channel_id: nextChannels[0].id }
+    ));
+  }
+
+  useEffect(() => { run(); }, []);
+
+  async function createChannel(event) {
+    event.preventDefault();
+    setActionError('');
+    try {
+      await api('/api/notification-channels', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: channelForm.name.trim(),
+          method: 'telegram',
+          enabled: channelForm.enabled,
+          config: {
+            bot_token: channelForm.bot_token.trim(),
+            chat_id: channelForm.chat_id.trim(),
+          },
+        }),
+      });
+      setChannelForm({ name: '', bot_token: '', chat_id: '', enabled: true });
+      run();
+    } catch (err) {
+      setActionError(err.message);
+    }
+  }
+
+  async function createRule(event) {
+    event.preventDefault();
+    setActionError('');
+    try {
+      await api('/api/notification-rules', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: ruleForm.name.trim(),
+          event_type: 'motion_detected',
+          enabled: ruleForm.enabled,
+          notification_channel_id: ruleForm.notification_channel_id,
+          camera_id: ruleForm.camera_id || null,
+          cooldown_seconds: Number(ruleForm.cooldown_seconds),
+          message_template: ruleForm.message_template,
+          attach_image: ruleForm.attach_image,
+          attach_video: ruleForm.attach_video,
+          pre_event_seconds: Number(ruleForm.pre_event_seconds),
+          post_event_seconds: Number(ruleForm.post_event_seconds),
+          video_fps: Number(ruleForm.video_fps),
+        }),
+      });
+      setRuleForm((current) => ({ ...current, name: 'Motion to Telegram' }));
+      run();
+    } catch (err) {
+      setActionError(err.message);
+    }
+  }
+
+  async function deleteChannel(channel) {
+    if (!window.confirm(`Delete notification channel "${channel.name}"?`)) return;
+    await api(`/api/notification-channels/${channel.id}`, { method: 'DELETE' });
+    run();
+  }
+
+  async function deleteRule(rule) {
+    if (!window.confirm(`Delete notification rule "${rule.name}"?`)) return;
+    await api(`/api/notification-rules/${rule.id}`, { method: 'DELETE' });
+    run();
+  }
+
+  const cameraNames = new Map(cameras.map((camera) => [camera.id, camera.name]));
+  const channelNames = new Map(channels.map((channel) => [channel.id, channel.name]));
+
+  return (
+    <Panel title="Notifications">
+      <State loading={loading} error={error} />
+      {actionError && <ErrorText message={actionError} />}
+      <section className="notification-admin-grid">
+        <form className="notification-card" onSubmit={createChannel}>
+          <div className="notification-card-heading">
+            <strong>Telegram channel</strong>
+            <span>Configure where detector notifications are delivered.</span>
+          </div>
+          <Field label="Display name">
+            <input value={channelForm.name} onChange={(event) => setChannelForm({ ...channelForm, name: event.target.value })} placeholder="Home Telegram" required />
+          </Field>
+          <Field label="Bot token">
+            <input type="password" value={channelForm.bot_token} onChange={(event) => setChannelForm({ ...channelForm, bot_token: event.target.value })} placeholder="123456:telegram-bot-token" required autoComplete="new-password" />
+          </Field>
+          <Field label="Chat ID">
+            <input value={channelForm.chat_id} onChange={(event) => setChannelForm({ ...channelForm, chat_id: event.target.value })} placeholder="123456789" required />
+          </Field>
+          <label className="switch-row">
+            <input type="checkbox" checked={channelForm.enabled} onChange={(event) => setChannelForm({ ...channelForm, enabled: event.target.checked })} />
+            <span><strong>Channel enabled</strong><small>Allow rules to send messages through this Telegram destination.</small></span>
+          </label>
+          <div className="form-actions"><button>Create channel</button></div>
+        </form>
+
+        <form className="notification-card" onSubmit={createRule}>
+          <div className="notification-card-heading">
+            <strong>Motion notification rule</strong>
+            <span>Choose which camera sends which Telegram message, and how often.</span>
+          </div>
+          <div className="notification-rule-grid">
+            <Field label="Rule name">
+              <input value={ruleForm.name} onChange={(event) => setRuleForm({ ...ruleForm, name: event.target.value })} required />
+            </Field>
+            <Field label="Telegram channel">
+              <select value={ruleForm.notification_channel_id} onChange={(event) => setRuleForm({ ...ruleForm, notification_channel_id: event.target.value })} required>
+                <option value="">Choose channel</option>
+                {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Camera">
+              <select value={ruleForm.camera_id} onChange={(event) => setRuleForm({ ...ruleForm, camera_id: event.target.value })}>
+                <option value="">All cameras</option>
+                {cameras.map((camera) => <option key={camera.id} value={camera.id}>{camera.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Cooldown seconds">
+              <input type="number" min="0" value={ruleForm.cooldown_seconds} onChange={(event) => setRuleForm({ ...ruleForm, cooldown_seconds: event.target.value })} />
+            </Field>
+          </div>
+          <Field label="Telegram message" help="Supported placeholders: {{camera_name}}, {{camera_id}}, {{event_time}}, {{score}}.">
+            <textarea rows="4" value={ruleForm.message_template} onChange={(event) => setRuleForm({ ...ruleForm, message_template: event.target.value })} />
+          </Field>
+          <div className="notification-rule-grid compact">
+            <Field label="Pre seconds">
+              <input type="number" min="0" max="120" value={ruleForm.pre_event_seconds} onChange={(event) => setRuleForm({ ...ruleForm, pre_event_seconds: event.target.value })} />
+            </Field>
+            <Field label="Post seconds">
+              <input type="number" min="0" max="120" value={ruleForm.post_event_seconds} onChange={(event) => setRuleForm({ ...ruleForm, post_event_seconds: event.target.value })} />
+            </Field>
+            <Field label="Video FPS">
+              <input type="number" min="1" max="15" value={ruleForm.video_fps} onChange={(event) => setRuleForm({ ...ruleForm, video_fps: event.target.value })} />
+            </Field>
+          </div>
+          <div className="camera-switches two-column">
+            <label className="switch-row"><input type="checkbox" checked={ruleForm.enabled} onChange={(event) => setRuleForm({ ...ruleForm, enabled: event.target.checked })} /> Enabled</label>
+            <label className="switch-row"><input type="checkbox" checked={ruleForm.attach_image} onChange={(event) => setRuleForm({ ...ruleForm, attach_image: event.target.checked })} /> Attach image</label>
+            <label className="switch-row"><input type="checkbox" checked={ruleForm.attach_video} onChange={(event) => setRuleForm({ ...ruleForm, attach_video: event.target.checked })} /> Attach video</label>
+          </div>
+          <div className="form-actions"><button disabled={!channels.length}>Create rule</button></div>
+        </form>
+      </section>
+
+      <h3>Telegram channels</h3>
+      <DataTable
+        columns={['name', 'method', 'enabled', 'chat_id', 'actions']}
+        rows={channels.map((channel) => ({
+          id: channel.id,
+          name: channel.name,
+          method: channel.method,
+          enabled: channel.enabled ? <StatusBadge kind="ok" text="enabled" /> : <StatusBadge kind="muted" text="disabled" />,
+          chat_id: channel.config?.chat_id,
+          actions: <button type="button" onClick={() => deleteChannel(channel)}>Delete</button>,
+        }))}
+      />
+
+      <h3>Notification rules</h3>
+      <DataTable
+        columns={['name', 'event', 'channel', 'camera', 'cooldown', 'enabled', 'actions']}
+        rows={rules.map((rule) => ({
+          id: rule.id,
+          name: rule.name,
+          event: rule.event_type,
+          channel: channelNames.get(rule.notification_channel_id) || shortID(rule.notification_channel_id),
+          camera: rule.camera_id ? (cameraNames.get(rule.camera_id) || shortID(rule.camera_id)) : 'All cameras',
+          cooldown: `${rule.cooldown_seconds}s`,
+          enabled: rule.enabled ? <StatusBadge kind="ok" text="enabled" /> : <StatusBadge kind="muted" text="disabled" />,
+          actions: <button type="button" onClick={() => deleteRule(rule)}>Delete</button>,
+        }))}
+      />
+    </Panel>
+  );
+}
 
 function AlertsPage() {
   const [rules, setRules] = useState([]);

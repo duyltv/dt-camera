@@ -255,7 +255,7 @@ func sendTelegramNotification(ctx context.Context, rule NotificationRule, camera
 	if token == "" || chatID == "" {
 		return fmt.Errorf("telegram bot_token and chat_id are required")
 	}
-	text := fmt.Sprintf("Motion detected on %s\nTime: %s\nScore: %.3f", camera.Name, event.OccurredAt.UTC().Format(time.RFC3339), event.Score)
+	text := renderNotificationMessage(rule.MessageTemplate, camera, event)
 	if event.VideoPath != "" {
 		if err := telegramUpload(ctx, token, "sendVideo", chatID, text, "video", event.VideoPath); err == nil {
 			return nil
@@ -323,6 +323,23 @@ func doTelegramRequest(req *http.Request) error {
 		return fmt.Errorf("telegram returned %s: %s", resp.Status, sanitizeLog(string(body)))
 	}
 	return nil
+}
+
+func renderNotificationMessage(template string, camera Camera, event MotionEvent) string {
+	if strings.TrimSpace(template) == "" {
+		template = "Motion detected on {{camera_name}}\nTime: {{event_time}}\nScore: {{score}}"
+	}
+	replacements := map[string]string{
+		"{{camera_name}}": camera.Name,
+		"{{camera_id}}":   camera.ID,
+		"{{event_time}}":  event.OccurredAt.UTC().Format(time.RFC3339),
+		"{{score}}":       fmt.Sprintf("%.3f", event.Score),
+	}
+	out := template
+	for key, value := range replacements {
+		out = strings.ReplaceAll(out, key, value)
+	}
+	return out
 }
 
 func maxFloat(a, b float64) float64 {

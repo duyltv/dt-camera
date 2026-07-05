@@ -20,7 +20,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -39,13 +40,25 @@ button[type="button"] {
 }
 
 input,
-select {
+select,
+textarea {
   min-height: 38px;
   border: 1px solid #cdd5df;
   border-radius: 6px;
   background: white;
   color: #1f2937;
   padding: 8px 10px;
+}
+
+textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+textarea:focus {
+  border-color: #0f766e;
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.16);
+  outline: none;
 }
 
 button:disabled {
@@ -203,6 +216,7 @@ button:disabled {
 
 .form-grid input,
 .form-grid select,
+.form-grid textarea,
 .toolbar input,
 .toolbar select {
   min-width: 180px;
@@ -1272,6 +1286,52 @@ button:disabled {
   align-content: end;
   display: grid;
   gap: 8px;
+}
+
+.camera-switches.two-column {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.notification-admin-grid {
+  align-items: start;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(280px, 0.85fr) minmax(360px, 1.15fr);
+  margin-bottom: 18px;
+}
+
+.notification-card {
+  background: #ffffff;
+  border: 1px solid #d9e1ec;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.notification-card-heading {
+  display: grid;
+  gap: 4px;
+}
+
+.notification-card-heading strong {
+  color: #111827;
+  font-size: 15px;
+}
+
+.notification-card-heading span {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.notification-rule-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.notification-rule-grid.compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .detector-settings {
@@ -2578,6 +2638,16 @@ video {
 
   .storage-create-form .form-actions {
     grid-column: 2;
+  }
+
+  .notification-admin-grid,
+  .notification-rule-grid,
+  .notification-rule-grid.compact {
+    grid-template-columns: 1fr;
+  }
+
+  .camera-switches.two-column {
+    grid-template-columns: 1fr;
   }
 }
 

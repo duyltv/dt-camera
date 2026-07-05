@@ -62,6 +62,7 @@ type NotificationRule struct {
 	EventType             string
 	NotificationChannelID string
 	CooldownSeconds       int
+	MessageTemplate       string
 	AttachImage           bool
 	AttachVideo           bool
 	PreEventSeconds       int
