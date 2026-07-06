@@ -16,6 +16,7 @@ bin/
 # Frontend
 frontend/node_modules/
 frontend/dist/
+landing-page/
 
 # OS/editor
 .DS_Store

@@ -3288,6 +3288,7 @@ function LiveLayoutGrid({ layout, cameras, editable, onChange, onError }) {
 function VideoPlayer({ src, offsetSeconds = 0, controlled = false, register, playing = false, autoPlay = false }) {
   const ref = React.useRef(null);
   const [playbackError, setPlaybackError] = useState('');
+  const shouldMuteForAutoplay = autoPlay && !controlled;
 
   useEffect(() => {
     if (!src || !ref.current) return;
@@ -3372,7 +3373,7 @@ function VideoPlayer({ src, offsetSeconds = 0, controlled = false, register, pla
   }, [controlled, playing, src]);
   return (
     <>
-      <video ref={ref} controls={!controlled} muted playsInline autoPlay={autoPlay && !controlled} />
+      <video ref={ref} controls={!controlled} muted={shouldMuteForAutoplay} playsInline autoPlay={autoPlay && !controlled} />
       {playbackError && <ErrorText message={playbackError} />}
     </>
   );
