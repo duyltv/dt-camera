@@ -4,9 +4,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
+
+const maxNotificationDeliveries = 1000
 
 type notificationChannelResponse struct {
 	ID        string          `json:"id"`
@@ -56,6 +59,25 @@ type notificationRuleRequest struct {
 	PreEventSeconds       *int    `json:"pre_event_seconds,omitempty"`
 	PostEventSeconds      *int    `json:"post_event_seconds,omitempty"`
 	VideoFPS              *int    `json:"video_fps,omitempty"`
+}
+
+type notificationDeliveryResponse struct {
+	ID                    string     `json:"id"`
+	NotificationRuleID    string     `json:"notification_rule_id"`
+	NotificationChannelID string     `json:"notification_channel_id"`
+	RuleName              string     `json:"rule_name"`
+	ChannelName           string     `json:"channel_name"`
+	ChannelMethod         string     `json:"channel_method"`
+	EventType             string     `json:"event_type"`
+	EntityType            string     `json:"entity_type"`
+	EntityID              *string    `json:"entity_id,omitempty"`
+	CameraID              *string    `json:"camera_id,omitempty"`
+	CameraName            *string    `json:"camera_name,omitempty"`
+	Status                string     `json:"status"`
+	Error                 *string    `json:"error,omitempty"`
+	SentAt                *time.Time `json:"sent_at,omitempty"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
 func (s *Server) handleNotificationChannels(w http.ResponseWriter, r *http.Request) {
@@ -126,6 +148,17 @@ func (s *Server) handleNotificationRuleByID(w http.ResponseWriter, r *http.Reque
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", nil)
 	}
+}
+
+func (s *Server) handleNotificationDeliveries(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", nil)
+		return
+	}
+	s.listNotificationDeliveries(w, r)
 }
 
 func (s *Server) listNotificationChannels(w http.ResponseWriter, r *http.Request) {
@@ -225,6 +258,18 @@ func (s *Server) updateNotificationChannel(w http.ResponseWriter, r *http.Reques
 	config := req.Config
 	if config == nil {
 		config = rawJSONToMap(current.Config)
+	} else {
+		currentConfig := rawJSONToMap(current.Config)
+		if strings.TrimSpace(stringMapValue(config, "bot_token")) == "" || stringMapValue(config, "bot_token") == "[redacted]" {
+			if token := strings.TrimSpace(stringMapValue(currentConfig, "bot_token")); token != "" {
+				config["bot_token"] = token
+			}
+		}
+		if strings.TrimSpace(stringMapValue(config, "chat_id")) == "" {
+			if chatID := strings.TrimSpace(stringMapValue(currentConfig, "chat_id")); chatID != "" {
+				config["chat_id"] = chatID
+			}
+		}
 	}
 	if err := validateNotificationChannelConfig(method, config); err != nil {
 		writeError(w, http.StatusBadRequest, "validation_error", err.Error(), nil)
@@ -287,6 +332,99 @@ func (s *Server) listNotificationRules(w http.ResponseWriter, r *http.Request) {
 		items = append(items, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"notification_rules": items})
+}
+
+func (s *Server) listNotificationDeliveries(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	offset := 0
+	const maxWindow = maxNotificationDeliveries
+	query := r.URL.Query()
+	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err == nil && parsed > 0 && parsed <= 50 {
+			limit = parsed
+		}
+	}
+	if raw := strings.TrimSpace(query.Get("offset")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err == nil && parsed > 0 {
+			offset = parsed
+		}
+	}
+	if offset >= maxWindow {
+		offset = maxWindow - limit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset+limit > maxWindow {
+		limit = maxWindow - offset
+	}
+	if err := s.pruneNotificationDeliveries(r); err != nil {
+		writeDBError(w, err)
+		return
+	}
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT d.id, d.notification_rule_id, d.notification_channel_id,
+			COALESCE(r.name, 'Deleted rule') AS rule_name,
+			COALESCE(ch.name, 'Deleted channel') AS channel_name,
+			COALESCE(ch.method, 'telegram') AS channel_method,
+			d.event_type, d.entity_type, d.entity_id, d.camera_id, c.name AS camera_name,
+			d.status, d.error, d.sent_at, d.created_at, d.updated_at
+		FROM notification_deliveries d
+		LEFT JOIN notification_rules r ON r.id = d.notification_rule_id
+		LEFT JOIN notification_channels ch ON ch.id = d.notification_channel_id
+		LEFT JOIN cameras c ON c.id = d.camera_id
+		ORDER BY d.created_at DESC
+		LIMIT $1 OFFSET $2
+	`, limit, offset)
+	if err != nil {
+		writeDBError(w, err)
+		return
+	}
+	defer rows.Close()
+	items := []notificationDeliveryResponse{}
+	for rows.Next() {
+		item, err := scanNotificationDelivery(rows)
+		if err != nil {
+			writeDBError(w, err)
+			return
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		writeDBError(w, err)
+		return
+	}
+
+	var totalLatest int
+	if err := s.db.QueryRowContext(r.Context(), `
+		SELECT LEAST(COUNT(*), $1)::int FROM notification_deliveries
+	`, maxWindow).Scan(&totalLatest); err != nil {
+		writeDBError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"notification_deliveries": items,
+		"limit":                   limit,
+		"offset":                  offset,
+		"total_latest":            totalLatest,
+		"max_window":              maxWindow,
+	})
+}
+
+func (s *Server) pruneNotificationDeliveries(r *http.Request) error {
+	_, err := s.db.ExecContext(r.Context(), `
+		DELETE FROM notification_deliveries
+		WHERE id NOT IN (
+			SELECT id
+			FROM notification_deliveries
+			ORDER BY created_at DESC, id DESC
+			LIMIT $1
+		)
+	`, maxNotificationDeliveries)
+	return err
 }
 
 func (s *Server) createNotificationRule(w http.ResponseWriter, r *http.Request) {
@@ -513,6 +651,52 @@ func scanNotificationRule(scanner interface{ Scan(dest ...any) error }) (notific
 	}
 	if cameraID.Valid {
 		item.CameraID = &cameraID.String
+	}
+	return item, nil
+}
+
+func scanNotificationDelivery(scanner interface{ Scan(dest ...any) error }) (notificationDeliveryResponse, error) {
+	var item notificationDeliveryResponse
+	var entityID sql.NullString
+	var cameraID sql.NullString
+	var cameraName sql.NullString
+	var errText sql.NullString
+	var sentAt sql.NullTime
+	if err := scanner.Scan(
+		&item.ID,
+		&item.NotificationRuleID,
+		&item.NotificationChannelID,
+		&item.RuleName,
+		&item.ChannelName,
+		&item.ChannelMethod,
+		&item.EventType,
+		&item.EntityType,
+		&entityID,
+		&cameraID,
+		&cameraName,
+		&item.Status,
+		&errText,
+		&sentAt,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return notificationDeliveryResponse{}, err
+	}
+	if entityID.Valid {
+		item.EntityID = &entityID.String
+	}
+	if cameraID.Valid {
+		item.CameraID = &cameraID.String
+	}
+	if cameraName.Valid {
+		item.CameraName = &cameraName.String
+	}
+	if errText.Valid {
+		cleaned := sanitizeAlertString(errText.String)
+		item.Error = &cleaned
+	}
+	if sentAt.Valid {
+		item.SentAt = &sentAt.Time
 	}
 	return item, nil
 }

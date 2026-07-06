@@ -162,7 +162,6 @@ function Shell() {
             <NavLink to="/permissions">Permissions</NavLink>
             <NavLink to="/health">Health</NavLink>
             <NavLink to="/notifications">Notifications</NavLink>
-            <NavLink to="/alerts">Alerts</NavLink>
           </nav>
         )}
       </aside>
@@ -3768,6 +3767,14 @@ function AlertSeverityBadge({ severity }) {
   return <StatusBadge kind="muted" text={severity || 'unknown'} />;
 }
 
+function NotificationDeliveryStatusBadge({ status }) {
+  if (status === 'sent') return <StatusBadge kind="ok" text="sent" />;
+  if (status === 'pending') return <StatusBadge kind="warning" text="pending" />;
+  if (status === 'suppressed') return <StatusBadge kind="muted" text="suppressed" />;
+  if (status === 'failed') return <StatusBadge kind="error" text="failed" />;
+  return <StatusBadge kind="muted" text={status || 'unknown'} />;
+}
+
 const alertRuleTypeOptions = [
   { value: 'recorder_stale', label: 'Recorder stale' },
   { value: 'camera_recording_failed', label: 'Camera recording failed' },
@@ -3775,37 +3782,53 @@ const alertRuleTypeOptions = [
   { value: 'live_stream_failed', label: 'Live stream failed' },
 ];
 
+const emptyNotificationChannelForm = { name: '', bot_token: '', chat_id: '', enabled: true };
+const defaultNotificationRuleForm = {
+  name: 'Motion to Telegram',
+  notification_channel_id: '',
+  camera_id: '',
+  cooldown_seconds: 300,
+  message_template: 'Motion detected on {{camera_name}}\nTime: {{event_time}}\nScore: {{score}}',
+  attach_image: true,
+  attach_video: true,
+  pre_event_seconds: 7,
+  post_event_seconds: 3,
+  video_fps: 4,
+  enabled: true,
+};
+
 function NotificationsPage() {
   const [channels, setChannels] = useState([]);
   const [rules, setRules] = useState([]);
   const [cameras, setCameras] = useState([]);
-  const [channelForm, setChannelForm] = useState({ name: '', bot_token: '', chat_id: '', enabled: true });
-  const [ruleForm, setRuleForm] = useState({
-    name: 'Motion to Telegram',
-    notification_channel_id: '',
-    camera_id: '',
-    cooldown_seconds: 300,
-    message_template: 'Motion detected on {{camera_name}}\nTime: {{event_time}}\nScore: {{score}}',
-    attach_image: true,
-    attach_video: true,
-    pre_event_seconds: 7,
-    post_event_seconds: 3,
-    video_fps: 4,
-    enabled: true,
-  });
+  const [deliveries, setDeliveries] = useState([]);
+  const [deliveryMeta, setDeliveryMeta] = useState({ limit: 50, offset: 0, total_latest: 0, max_window: 1000 });
+  const [deliveryOffset, setDeliveryOffset] = useState(0);
+  const [channelForm, setChannelForm] = useState(emptyNotificationChannelForm);
+  const [editingChannelId, setEditingChannelId] = useState('');
+  const [ruleForm, setRuleForm] = useState(defaultNotificationRuleForm);
+  const [editingRuleId, setEditingRuleId] = useState('');
   const [actionError, setActionError] = useState('');
   const { loading, error, run } = useLoader(load);
 
   async function load() {
-    const [channelsData, rulesData, camerasData] = await Promise.all([
+    const [channelsData, rulesData, camerasData, deliveriesData] = await Promise.all([
       api('/api/notification-channels'),
       api('/api/notification-rules'),
       api('/api/cameras'),
+      api(`/api/notification-deliveries?limit=50&offset=${deliveryOffset}`),
     ]);
     const nextChannels = channelsData.notification_channels || [];
     setChannels(nextChannels);
     setRules(rulesData.notification_rules || []);
     setCameras(camerasData.cameras || []);
+    setDeliveries(deliveriesData.notification_deliveries || []);
+    setDeliveryMeta({
+      limit: deliveriesData.limit || 50,
+      offset: deliveriesData.offset || 0,
+      total_latest: deliveriesData.total_latest || 0,
+      max_window: deliveriesData.max_window || 1000,
+    });
     setRuleForm((current) => (
       current.notification_channel_id || !nextChannels.length
         ? current
@@ -3813,57 +3836,108 @@ function NotificationsPage() {
     ));
   }
 
-  useEffect(() => { run(); }, []);
+  useEffect(() => { run(); }, [deliveryOffset]);
 
-  async function createChannel(event) {
+  function notificationChannelPayload() {
+    const config = { chat_id: channelForm.chat_id.trim() };
+    if (channelForm.bot_token.trim()) {
+      config.bot_token = channelForm.bot_token.trim();
+    }
+    return {
+      name: channelForm.name.trim(),
+      method: 'telegram',
+      enabled: channelForm.enabled,
+      config,
+    };
+  }
+
+  function notificationRulePayload() {
+    return {
+      name: ruleForm.name.trim(),
+      event_type: 'motion_detected',
+      enabled: ruleForm.enabled,
+      notification_channel_id: ruleForm.notification_channel_id,
+      camera_id: ruleForm.camera_id || null,
+      cooldown_seconds: Number(ruleForm.cooldown_seconds),
+      message_template: ruleForm.message_template,
+      attach_image: ruleForm.attach_image,
+      attach_video: ruleForm.attach_video,
+      pre_event_seconds: Number(ruleForm.pre_event_seconds),
+      post_event_seconds: Number(ruleForm.post_event_seconds),
+      video_fps: Number(ruleForm.video_fps),
+    };
+  }
+
+  async function saveChannel(event) {
     event.preventDefault();
     setActionError('');
     try {
-      await api('/api/notification-channels', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: channelForm.name.trim(),
-          method: 'telegram',
-          enabled: channelForm.enabled,
-          config: {
-            bot_token: channelForm.bot_token.trim(),
-            chat_id: channelForm.chat_id.trim(),
-          },
-        }),
+      await api(editingChannelId ? `/api/notification-channels/${editingChannelId}` : '/api/notification-channels', {
+        method: editingChannelId ? 'PATCH' : 'POST',
+        body: JSON.stringify(notificationChannelPayload()),
       });
-      setChannelForm({ name: '', bot_token: '', chat_id: '', enabled: true });
+      cancelChannelEdit();
       run();
     } catch (err) {
       setActionError(err.message);
     }
   }
 
-  async function createRule(event) {
+  async function saveRule(event) {
     event.preventDefault();
     setActionError('');
     try {
-      await api('/api/notification-rules', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: ruleForm.name.trim(),
-          event_type: 'motion_detected',
-          enabled: ruleForm.enabled,
-          notification_channel_id: ruleForm.notification_channel_id,
-          camera_id: ruleForm.camera_id || null,
-          cooldown_seconds: Number(ruleForm.cooldown_seconds),
-          message_template: ruleForm.message_template,
-          attach_image: ruleForm.attach_image,
-          attach_video: ruleForm.attach_video,
-          pre_event_seconds: Number(ruleForm.pre_event_seconds),
-          post_event_seconds: Number(ruleForm.post_event_seconds),
-          video_fps: Number(ruleForm.video_fps),
-        }),
+      await api(editingRuleId ? `/api/notification-rules/${editingRuleId}` : '/api/notification-rules', {
+        method: editingRuleId ? 'PATCH' : 'POST',
+        body: JSON.stringify(notificationRulePayload()),
       });
-      setRuleForm((current) => ({ ...current, name: 'Motion to Telegram' }));
+      cancelRuleEdit();
       run();
     } catch (err) {
       setActionError(err.message);
     }
+  }
+
+  function editChannel(channel) {
+    setActionError('');
+    setEditingChannelId(channel.id);
+    setChannelForm({
+      name: channel.name || '',
+      bot_token: '',
+      chat_id: channel.config?.chat_id || '',
+      enabled: Boolean(channel.enabled),
+    });
+  }
+
+  function cancelChannelEdit() {
+    setEditingChannelId('');
+    setChannelForm(emptyNotificationChannelForm);
+  }
+
+  function editRule(rule) {
+    setActionError('');
+    setEditingRuleId(rule.id);
+    setRuleForm({
+      name: rule.name || '',
+      notification_channel_id: rule.notification_channel_id || '',
+      camera_id: rule.camera_id || '',
+      cooldown_seconds: rule.cooldown_seconds ?? 300,
+      message_template: rule.message_template || defaultNotificationRuleForm.message_template,
+      attach_image: Boolean(rule.attach_image),
+      attach_video: Boolean(rule.attach_video),
+      pre_event_seconds: rule.pre_event_seconds ?? 7,
+      post_event_seconds: rule.post_event_seconds ?? 3,
+      video_fps: rule.video_fps ?? 4,
+      enabled: Boolean(rule.enabled),
+    });
+  }
+
+  function cancelRuleEdit() {
+    setEditingRuleId('');
+    setRuleForm((current) => ({
+      ...defaultNotificationRuleForm,
+      notification_channel_id: current.notification_channel_id || channels[0]?.id || '',
+    }));
   }
 
   async function deleteChannel(channel) {
@@ -3880,22 +3954,38 @@ function NotificationsPage() {
 
   const cameraNames = new Map(cameras.map((camera) => [camera.id, camera.name]));
   const channelNames = new Map(channels.map((channel) => [channel.id, channel.name]));
+  const deliveryPageStart = deliveryMeta.total_latest ? deliveryMeta.offset + 1 : 0;
+  const deliveryPageEnd = Math.min(deliveryMeta.offset + deliveryMeta.limit, deliveryMeta.total_latest);
+  const canPrevDeliveries = deliveryMeta.offset > 0;
+  const canNextDeliveries = deliveryMeta.offset + deliveryMeta.limit < deliveryMeta.total_latest
+    && deliveryMeta.offset + deliveryMeta.limit < deliveryMeta.max_window;
+
+  function previousDeliveries() {
+    setDeliveryOffset((current) => Math.max(0, current - 50));
+  }
+
+  function nextDeliveries() {
+    setDeliveryOffset((current) => Math.min(Math.max(deliveryMeta.max_window - 50, 0), current + 50));
+  }
 
   return (
     <Panel title="Notifications">
       <State loading={loading} error={error} />
       {actionError && <ErrorText message={actionError} />}
       <section className="notification-admin-grid">
-        <form className="notification-card" onSubmit={createChannel}>
+        <form className={'notification-card' + (editingChannelId ? ' editing' : '')} onSubmit={saveChannel}>
           <div className="notification-card-heading">
-            <strong>Telegram channel</strong>
-            <span>Configure where detector notifications are delivered.</span>
+            <div>
+              <strong>{editingChannelId ? 'Edit Telegram channel' : 'Telegram channel'}</strong>
+              {editingChannelId && <StatusBadge kind="warning" text="editing" />}
+            </div>
+            <span>{editingChannelId ? 'Update this destination. Leave bot token blank to keep the saved token.' : 'Configure where detector notifications are delivered.'}</span>
           </div>
           <Field label="Display name">
             <input value={channelForm.name} onChange={(event) => setChannelForm({ ...channelForm, name: event.target.value })} placeholder="Home Telegram" required />
           </Field>
           <Field label="Bot token">
-            <input type="password" value={channelForm.bot_token} onChange={(event) => setChannelForm({ ...channelForm, bot_token: event.target.value })} placeholder="123456:telegram-bot-token" required autoComplete="new-password" />
+            <input type="password" value={channelForm.bot_token} onChange={(event) => setChannelForm({ ...channelForm, bot_token: event.target.value })} placeholder={editingChannelId ? 'Leave blank to keep current token' : '123456:telegram-bot-token'} required={!editingChannelId} autoComplete="new-password" />
           </Field>
           <Field label="Chat ID">
             <input value={channelForm.chat_id} onChange={(event) => setChannelForm({ ...channelForm, chat_id: event.target.value })} placeholder="123456789" required />
@@ -3904,13 +3994,19 @@ function NotificationsPage() {
             <input type="checkbox" checked={channelForm.enabled} onChange={(event) => setChannelForm({ ...channelForm, enabled: event.target.checked })} />
             <span><strong>Channel enabled</strong><small>Allow rules to send messages through this Telegram destination.</small></span>
           </label>
-          <div className="form-actions"><button>Create channel</button></div>
+          <div className="form-actions notification-form-actions">
+            {editingChannelId && <button type="button" className="secondary" onClick={cancelChannelEdit}>Cancel</button>}
+            <button>{editingChannelId ? 'Save channel' : 'Create channel'}</button>
+          </div>
         </form>
 
-        <form className="notification-card" onSubmit={createRule}>
+        <form className={'notification-card' + (editingRuleId ? ' editing' : '')} onSubmit={saveRule}>
           <div className="notification-card-heading">
-            <strong>Motion notification rule</strong>
-            <span>Choose which camera sends which Telegram message, and how often.</span>
+            <div>
+              <strong>{editingRuleId ? 'Edit motion rule' : 'Motion notification rule'}</strong>
+              {editingRuleId && <StatusBadge kind="warning" text="editing" />}
+            </div>
+            <span>{editingRuleId ? 'Adjust the camera scope, cooldown, message, and evidence attachments.' : 'Choose which camera sends which Telegram message, and how often.'}</span>
           </div>
           <div className="notification-rule-grid">
             <Field label="Rule name">
@@ -3951,7 +4047,10 @@ function NotificationsPage() {
             <label className="switch-row"><input type="checkbox" checked={ruleForm.attach_image} onChange={(event) => setRuleForm({ ...ruleForm, attach_image: event.target.checked })} /> Attach image</label>
             <label className="switch-row"><input type="checkbox" checked={ruleForm.attach_video} onChange={(event) => setRuleForm({ ...ruleForm, attach_video: event.target.checked })} /> Attach video</label>
           </div>
-          <div className="form-actions"><button disabled={!channels.length}>Create rule</button></div>
+          <div className="form-actions notification-form-actions">
+            {editingRuleId && <button type="button" className="secondary" onClick={cancelRuleEdit}>Cancel</button>}
+            <button disabled={!channels.length}>{editingRuleId ? 'Save rule' : 'Create rule'}</button>
+          </div>
         </form>
       </section>
 
@@ -3964,7 +4063,12 @@ function NotificationsPage() {
           method: channel.method,
           enabled: channel.enabled ? <StatusBadge kind="ok" text="enabled" /> : <StatusBadge kind="muted" text="disabled" />,
           chat_id: channel.config?.chat_id,
-          actions: <button type="button" onClick={() => deleteChannel(channel)}>Delete</button>,
+          actions: (
+            <div className="table-actions">
+              <button type="button" onClick={() => editChannel(channel)}>Edit</button>
+              <button type="button" className="danger" onClick={() => deleteChannel(channel)}>Delete</button>
+            </div>
+          ),
         }))}
       />
 
@@ -3979,9 +4083,46 @@ function NotificationsPage() {
           camera: rule.camera_id ? (cameraNames.get(rule.camera_id) || shortID(rule.camera_id)) : 'All cameras',
           cooldown: `${rule.cooldown_seconds}s`,
           enabled: rule.enabled ? <StatusBadge kind="ok" text="enabled" /> : <StatusBadge kind="muted" text="disabled" />,
-          actions: <button type="button" onClick={() => deleteRule(rule)}>Delete</button>,
+          actions: (
+            <div className="table-actions">
+              <button type="button" onClick={() => editRule(rule)}>Edit</button>
+              <button type="button" className="danger" onClick={() => deleteRule(rule)}>Delete</button>
+            </div>
+          ),
         }))}
       />
+
+      <section className="notification-history-section">
+        <div className="notification-history-header">
+          <div>
+            <h3>Recent notification deliveries</h3>
+            <p>Latest delivery attempts across Telegram rules, newest first.</p>
+          </div>
+          <div className="notification-history-pager">
+            <span>
+              {deliveryMeta.total_latest
+                ? `${deliveryPageStart}-${deliveryPageEnd} of latest ${deliveryMeta.total_latest}`
+                : 'No deliveries yet'}
+            </span>
+            <button type="button" disabled={!canPrevDeliveries} onClick={previousDeliveries}>Previous</button>
+            <button type="button" disabled={!canNextDeliveries} onClick={nextDeliveries}>Next</button>
+          </div>
+        </div>
+        <DataTable
+          columns={['time', 'status', 'rule', 'channel', 'camera', 'event', 'details']}
+          rows={deliveries.map((delivery) => ({
+            id: delivery.id,
+            time: formatDateTime(delivery.sent_at || delivery.created_at),
+            status: <NotificationDeliveryStatusBadge status={delivery.status} />,
+            rule: delivery.rule_name || shortID(delivery.notification_rule_id),
+            channel: delivery.channel_name || shortID(delivery.notification_channel_id),
+            camera: delivery.camera_name || (delivery.camera_id ? shortID(delivery.camera_id) : 'All cameras'),
+            event: humanizeKey(delivery.event_type),
+            details: delivery.error || (delivery.status === 'sent' ? 'Delivered' : humanizeKey(delivery.entity_type || 'delivery')),
+          }))}
+        />
+        {!loading && !deliveries.length && <EmptyState title="No notification history" body="Delivery attempts will appear here after notification rules send, suppress, or fail." />}
+      </section>
     </Panel>
   );
 }

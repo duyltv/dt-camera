@@ -151,6 +151,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/notification-channels/", s.handleNotificationChannelByID)
 	mux.HandleFunc("/api/notification-rules", s.handleNotificationRules)
 	mux.HandleFunc("/api/notification-rules/", s.handleNotificationRuleByID)
+	mux.HandleFunc("/api/notification-deliveries", s.handleNotificationDeliveries)
 	mux.HandleFunc("/api/migrations", s.handleMigrations)
 	mux.HandleFunc("/api/retention/status", s.handleRetentionStatus)
 	mux.HandleFunc("/api/version", s.handleVersion)

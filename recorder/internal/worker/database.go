@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+const maxNotificationDeliveries = 1000
+
 func fetchEnabledCameras(ctx context.Context, db *sql.DB) ([]Camera, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT
@@ -298,6 +300,25 @@ func insertNotificationDelivery(ctx context.Context, db *sql.DB, rule Notificati
 	`, rule.ID, rule.NotificationChannelID, eventType, entityType, nullableString(&entityID), nullableString(&cameraID), status, errText, nullableTime(sentAt))
 	if err != nil {
 		return fmt.Errorf("insert notification delivery: %w", err)
+	}
+	if err := pruneNotificationDeliveries(ctx, db); err != nil {
+		return err
+	}
+	return nil
+}
+
+func pruneNotificationDeliveries(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, `
+		DELETE FROM notification_deliveries
+		WHERE id NOT IN (
+			SELECT id
+			FROM notification_deliveries
+			ORDER BY created_at DESC, id DESC
+			LIMIT $1
+		)
+	`, maxNotificationDeliveries)
+	if err != nil {
+		return fmt.Errorf("prune notification deliveries: %w", err)
 	}
 	return nil
 }
