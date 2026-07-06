@@ -88,6 +88,22 @@ services:
         condition: service_healthy
     # No exposed port — the recorder has no inbound HTTP.
 
+  analytics-worker:
+    build:
+      context: ./analytics
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-dt_camera}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-dt_camera}?sslmode=disable
+      RECORDINGS_PATH: ${RECORDINGS_CONTAINER_PATH:-/recordings}
+      ANALYTICS_WORKER_ID: ${ANALYTICS_WORKER_ID:-analytics-1}
+      AI_MAX_CONCURRENT_JOBS: ${AI_MAX_CONCURRENT_JOBS:-1}
+      AI_POLL_INTERVAL_MS: ${AI_POLL_INTERVAL_MS:-1000}
+    volumes:
+      - ${RECORDINGS_HOST_PATH:-./data/recordings}:${RECORDINGS_CONTAINER_PATH:-/recordings}:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # No exposed port — analytics processing is driven by ai_jobs.
+
   frontend:
     build:
       context: ./frontend

@@ -72,8 +72,35 @@ func (j *recordingJob) processMotion(ctx context.Context, segmentID string, segm
 		log.Printf("motion event insert failed camera_id=%s camera_name=%q error=%v", j.camera.ID, j.camera.Name, err)
 		return
 	}
+	event.ID = eventID
 	_ = insertSystemEvent(ctx, j.db, "motion.detected", "camera", &j.camera.ID, "info", "motion detected", map[string]any{"camera_name": j.camera.Name, "score": detection.Score, "motion_event_id": eventID})
-	j.sendMotionNotifications(ctx, eventID, event)
+	j.enqueueMotionAnalytics(ctx, event)
+}
+
+func (j *recordingJob) enqueueMotionAnalytics(ctx context.Context, event MotionEvent) {
+	attributes := map[string]any{
+		"source":               "motion_detector",
+		"score":                event.Score,
+		"recording_segment_id": event.RecordingSegmentID,
+		"video_path":           event.VideoPath,
+	}
+	observationID, err := insertObservation(ctx, j.db, event, "motion", attributes)
+	if err != nil {
+		log.Printf("motion observation insert failed camera_id=%s camera_name=%q error=%v", j.camera.ID, j.camera.Name, err)
+		return
+	}
+	jobID, err := enqueueAIJob(ctx, j.db, j.camera.ID, event.ID, "human_detection", event.ImagePath, 100, map[string]any{
+		"source":         "motion_observation",
+		"observation_id": observationID,
+		"video_path":     event.VideoPath,
+		"cpu_budget":     "low",
+		"pipeline":       []string{"motion", "low_fps_sampling", "human_detection", "optional_face_detection", "optional_face_embedding"},
+	})
+	if err != nil {
+		log.Printf("motion ai job enqueue failed camera_id=%s camera_name=%q observation_id=%s error=%v", j.camera.ID, j.camera.Name, observationID, err)
+		return
+	}
+	_ = insertSystemEvent(ctx, j.db, "ai.job_queued", "observation", &observationID, "info", "motion analytics job queued", map[string]any{"camera_name": j.camera.Name, "job_id": jobID, "job_type": "human_detection"})
 }
 
 func (j *recordingJob) sendMotionNotifications(ctx context.Context, eventID string, event MotionEvent) {

@@ -61,6 +61,16 @@ type notificationRuleRequest struct {
 	VideoFPS              *int    `json:"video_fps,omitempty"`
 }
 
+var notificationRuleEventTypes = map[string]struct{}{
+	"motion_detected":         {},
+	"human_detected":          {},
+	"person_detected":         {},
+	"person_recognized":       {},
+	"unknown_person_detected": {},
+	"classification":          {},
+	"observation_created":     {},
+}
+
 type notificationDeliveryResponse struct {
 	ID                    string     `json:"id"`
 	NotificationRuleID    string     `json:"notification_rule_id"`
@@ -548,7 +558,7 @@ func (s *Server) readNotificationRuleRequest(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "validation_error", "name, event_type, and notification_channel_id are required", nil)
 		return req, false
 	}
-	if req.EventType != "motion_detected" && req.EventType != "human_detected" && req.EventType != "classification" {
+	if _, ok := notificationRuleEventTypes[req.EventType]; !ok {
 		writeError(w, http.StatusBadRequest, "validation_error", "event_type is invalid", nil)
 		return req, false
 	}

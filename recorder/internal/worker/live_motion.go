@@ -186,6 +186,7 @@ func (d *liveMotionDetector) ingestFrame(ctx context.Context, img image.Image, a
 			log.Printf("live motion event insert failed camera_id=%s camera_name=%q error=%v", d.job.camera.ID, d.job.camera.Name, err)
 			return nil
 		}
+		event.ID = eventID
 		_ = insertSystemEvent(ctx, d.job.db, "motion.detected", "camera", &d.job.camera.ID, "info", "live motion detected", map[string]any{"camera_name": d.job.camera.Name, "score": score, "motion_event_id": eventID})
 		go d.finalizeLiveMotionEvent(context.Background(), eventID, event, activeUntil)
 	}
@@ -227,7 +228,8 @@ func (d *liveMotionDetector) finalizeLiveMotionEvent(ctx context.Context, eventI
 		log.Printf("live motion evidence update failed camera_id=%s camera_name=%q error=%v", d.job.camera.ID, d.job.camera.Name, err)
 		return
 	}
-	d.job.sendMotionNotifications(ctx, eventID, event)
+	event.ID = eventID
+	d.job.enqueueMotionAnalytics(ctx, event)
 }
 
 func (d *liveMotionDetector) framesAround(occurredAt time.Time, pre, post time.Duration) []liveMotionFrame {

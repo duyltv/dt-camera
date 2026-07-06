@@ -205,6 +205,48 @@ func updateMotionEventEvidence(ctx context.Context, db *sql.DB, id, imagePath, v
 	return nil
 }
 
+func insertObservation(ctx context.Context, db *sql.DB, event MotionEvent, observationType string, attributes map[string]any) (string, error) {
+	if attributes == nil {
+		attributes = map[string]any{}
+	}
+	payload, err := json.Marshal(attributes)
+	if err != nil {
+		return "", fmt.Errorf("marshal observation attributes: %w", err)
+	}
+	var id string
+	err = db.QueryRowContext(ctx, `
+		INSERT INTO observations (
+			camera_id, event_id, observed_at, observation_type, confidence, frame_path, crop_path, attributes_json
+		)
+		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), $8::jsonb)
+		RETURNING id
+	`, event.CameraID, nullableString(&event.ID), event.OccurredAt, observationType, event.Score, event.ImagePath, "", string(payload)).Scan(&id)
+	if err != nil {
+		return "", fmt.Errorf("insert observation: %w", err)
+	}
+	return id, nil
+}
+
+func enqueueAIJob(ctx context.Context, db *sql.DB, cameraID, sourceEventID, jobType, framePath string, priority int, metadata map[string]any) (string, error) {
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	payload, err := json.Marshal(metadata)
+	if err != nil {
+		return "", fmt.Errorf("marshal ai job metadata: %w", err)
+	}
+	var id string
+	err = db.QueryRowContext(ctx, `
+		INSERT INTO ai_jobs (camera_id, source_event_id, job_type, priority, frame_path, metadata_json)
+		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6::jsonb)
+		RETURNING id
+	`, cameraID, nullableString(&sourceEventID), jobType, priority, framePath, string(payload)).Scan(&id)
+	if err != nil {
+		return "", fmt.Errorf("enqueue ai job: %w", err)
+	}
+	return id, nil
+}
+
 func fetchNotificationRules(ctx context.Context, db *sql.DB, eventType, cameraID string) ([]NotificationRule, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT

@@ -1036,6 +1036,231 @@ button:disabled {
   padding: 7px 10px;
 }
 
+.identity-hero {
+  align-items: center;
+  background: linear-gradient(180deg, #f8fafc, #ffffff);
+  border: 1px solid #d9e1ec;
+  border-radius: 8px;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding: 16px;
+}
+
+.identity-hero h3 {
+  color: #111827;
+  font-size: 18px;
+  margin: 0 0 4px;
+}
+
+.identity-hero p {
+  color: #64748b;
+  margin: 0;
+  max-width: 780px;
+}
+
+.identity-layout {
+  align-items: start;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(420px, 1.4fr);
+}
+
+.identity-list-panel,
+.identity-detail-panel {
+  background: #ffffff;
+  border: 1px solid #d9e1ec;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.identity-list {
+  display: grid;
+  gap: 10px;
+}
+
+.identity-list-item {
+  align-items: start;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  padding: 12px;
+  text-align: left;
+}
+
+.identity-list-item.active,
+.identity-list-item:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+
+.identity-list-item strong {
+  color: #111827;
+  display: block;
+  font-size: 15px;
+}
+
+.identity-list-item span,
+.identity-list-item small {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.identity-detail-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.identity-detail-header h3 {
+  color: #111827;
+  font-size: 18px;
+  margin: 0 0 4px;
+}
+
+.identity-detail-header p {
+  color: #64748b;
+  margin: 0;
+}
+
+.identity-form {
+  background: #fbfdff;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 14px;
+}
+
+.identity-notes-field {
+  grid-column: 1 / -1;
+}
+
+.identity-meta-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+
+.identity-meta-grid > div {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+}
+
+.identity-meta-grid span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.identity-meta-grid strong {
+  color: #111827;
+}
+
+.identity-settings-placeholder {
+  align-items: end;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, 0.45fr) minmax(260px, 0.75fr);
+  margin-bottom: 16px;
+  padding: 14px;
+}
+
+.identity-settings-placeholder strong {
+  color: #111827;
+}
+
+.identity-settings-placeholder p {
+  color: #64748b;
+  margin: 4px 0 0;
+}
+
+.switch-row.disabled {
+  opacity: 0.7;
+}
+
+.reference-section {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 14px;
+}
+
+.reference-upload {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+}
+
+.reference-upload input {
+  flex: 1 1 260px;
+}
+
+.reference-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+
+.reference-card {
+  background: #ffffff;
+  border: 1px solid #d9e1ec;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  overflow: hidden;
+  padding: 8px;
+}
+
+.reference-card img {
+  aspect-ratio: 4 / 3;
+  background: #0f172a;
+  border-radius: 6px;
+  object-fit: cover;
+  width: 100%;
+}
+
+.reference-card > div {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.reference-card small {
+  color: #64748b;
+}
+
+.reference-card .danger {
+  background: #ffffff;
+  border-color: #fecaca;
+  color: #b91c1c;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
 .camera-admin-section {
   border-bottom: 1px solid #e5e7eb;
   margin-bottom: 18px;

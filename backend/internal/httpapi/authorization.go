@@ -48,3 +48,24 @@ func (s *Server) filterPlaybackCameraIDs(r *http.Request, user userResponse, cam
 	}
 	return allowed
 }
+
+func (s *Server) playbackCameraIDsForUser(r *http.Request, userID string) ([]string, error) {
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT camera_id
+		FROM user_camera_permissions
+		WHERE user_id = $1 AND can_view_playback = TRUE
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}

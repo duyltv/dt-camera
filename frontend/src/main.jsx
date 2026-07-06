@@ -18,9 +18,10 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '';
 const AuthContext = createContext(null);
 
 async function api(path, options = {}) {
+  const isFormData = options.body instanceof FormData;
   const response = await fetch(`${apiBaseUrl}${path}`, {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers: isFormData ? { ...(options.headers || {}) } : { 'Content-Type': 'application/json', ...(options.headers || {}) },
     ...options,
   });
   const text = await response.text();
@@ -87,6 +88,7 @@ function App() {
             <Route path="cameras" element={<AdminOnly><CamerasPage /></AdminOnly>} />
             <Route path="users" element={<AdminOnly><UsersPage /></AdminOnly>} />
             <Route path="permissions" element={<AdminOnly><PermissionsPage /></AdminOnly>} />
+            <Route path="identities" element={<AdminOnly><IdentitiesPage /></AdminOnly>} />
             <Route path="health" element={<AdminOnly><HealthDashboardPage /></AdminOnly>} />
             <Route path="notifications" element={<AdminOnly><NotificationsPage /></AdminOnly>} />
             <Route path="alerts" element={<AdminOnly><AlertsPage /></AdminOnly>} />
@@ -160,6 +162,7 @@ function Shell() {
             <NavLink to="/cameras">Cameras</NavLink>
             <NavLink to="/users">Users</NavLink>
             <NavLink to="/permissions">Permissions</NavLink>
+            <NavLink to="/identities">Identities</NavLink>
             <NavLink to="/health">Health</NavLink>
             <NavLink to="/notifications">Notifications</NavLink>
           </nav>
@@ -2228,6 +2231,267 @@ function LayoutCanvas({ layout, cameras, onChange, onError, editable = true }) {
         </div>
       )}
     </div>
+  );
+}
+
+function IdentitiesPage() {
+  const [identities, setIdentities] = useState([]);
+  const [selectedId, setSelectedId] = useState('');
+  const [selected, setSelected] = useState(null);
+  const [referenceImages, setReferenceImages] = useState([]);
+  const [form, setForm] = useState({ display_name: '', known: true, notes: '' });
+  const [editing, setEditing] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const fileInputRef = useRef(null);
+  const { loading, error, run } = useLoader(load);
+
+  async function load() {
+    const data = await api('/api/identities');
+    const list = data.identities || [];
+    setIdentities(list);
+    const nextId = selectedId && list.some((item) => item.id === selectedId)
+      ? selectedId
+      : list[0]?.id || '';
+    setSelectedId(nextId);
+    if (nextId) {
+      await loadIdentity(nextId);
+    } else {
+      setSelected(null);
+      setReferenceImages([]);
+    }
+  }
+
+  async function loadIdentity(id) {
+    const [identityData, refsData] = await Promise.all([
+      api(`/api/identities/${id}`),
+      api(`/api/identities/${id}/reference-images`),
+    ]);
+    setSelected(identityData);
+    setReferenceImages(refsData.reference_images || []);
+    setForm({
+      display_name: identityData.display_name || '',
+      known: identityData.known !== false,
+      notes: identityData.notes || '',
+    });
+    setEditing(false);
+  }
+
+  useEffect(() => { run(); }, []);
+
+  async function selectIdentity(id) {
+    setActionError('');
+    setSelectedId(id);
+    await loadIdentity(id);
+  }
+
+  async function saveIdentity(event) {
+    event.preventDefault();
+    setActionError('');
+    try {
+      const payload = {
+        display_name: form.display_name.trim(),
+        type: 'person',
+        known: form.known,
+        notes: form.notes,
+      };
+      if (selected?.id) {
+        await api(`/api/identities/${selected.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+        await loadIdentity(selected.id);
+      } else {
+        const created = await api('/api/identities', { method: 'POST', body: JSON.stringify(payload) });
+        await run();
+        setSelectedId(created.id);
+        await loadIdentity(created.id);
+      }
+    } catch (err) {
+      setActionError(err.message);
+    }
+  }
+
+  function startCreate() {
+    setSelectedId('');
+    setSelected(null);
+    setReferenceImages([]);
+    setForm({ display_name: '', known: true, notes: '' });
+    setEditing(true);
+    setActionError('');
+  }
+
+  async function deleteIdentity(identity) {
+    if (!window.confirm(`Delete identity "${identity.display_name}" and its reference images?`)) return;
+    setActionError('');
+    try {
+      await api(`/api/identities/${identity.id}`, { method: 'DELETE' });
+      setSelectedId('');
+      await run();
+    } catch (err) {
+      setActionError(err.message);
+    }
+  }
+
+  async function uploadReferenceImage(event) {
+    event.preventDefault();
+    if (!selected?.id || !fileInputRef.current?.files?.length) return;
+    setUploading(true);
+    setActionError('');
+    try {
+      const body = new FormData();
+      body.append('image', fileInputRef.current.files[0]);
+      await api(`/api/identities/${selected.id}/reference-images`, { method: 'POST', body });
+      fileInputRef.current.value = '';
+      await loadIdentity(selected.id);
+      await load();
+    } catch (err) {
+      setActionError(err.message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function deleteReferenceImage(image) {
+    if (!window.confirm('Delete this reference image?')) return;
+    setActionError('');
+    try {
+      await api(`/api/identity-reference-images/${image.id}`, { method: 'DELETE' });
+      await loadIdentity(selected.id);
+      await load();
+    } catch (err) {
+      setActionError(err.message);
+    }
+  }
+
+  return (
+    <Panel title="Identity Management">
+      <div className="identity-hero">
+        <div>
+          <h3>Known people and future recognition samples</h3>
+          <p>Reference images are stored now and will be used later by the face/person recognition pipeline. No model inference runs in this step.</p>
+        </div>
+        <button type="button" onClick={startCreate}>Add identity</button>
+      </div>
+      <State loading={loading} error={error} />
+      {actionError && <ErrorText message={actionError} />}
+
+      <div className="identity-layout">
+        <section className="identity-list-panel">
+          <div className="section-heading">
+            <h3>People</h3>
+            <p>{identities.length} identities configured</p>
+          </div>
+          <div className="identity-list">
+            {identities.map((identity) => (
+              <button
+                type="button"
+                key={identity.id}
+                className={'identity-list-item' + (identity.id === selectedId ? ' active' : '')}
+                onClick={() => selectIdentity(identity.id)}
+              >
+                <div>
+                  <strong>{identity.display_name}</strong>
+                  <span>{identity.reference_image_count || 0} reference images</span>
+                </div>
+                <StatusBadge kind={identity.known ? 'ok' : 'warning'} text={identity.known ? 'known' : 'unknown'} />
+                <small>Last seen: {identity.last_seen_at ? formatDateTime(identity.last_seen_at) : 'Not observed yet'}</small>
+              </button>
+            ))}
+            {!identities.length && !loading && <EmptyState title="No identities yet" body="Create Person A, then add several clear reference images." />}
+          </div>
+        </section>
+
+        <section className="identity-detail-panel">
+          {(editing || selected) ? (
+            <>
+              <div className="identity-detail-header">
+                <div>
+                  <h3>{selected ? selected.display_name : 'Add identity'}</h3>
+                  <p>{selected ? 'Manage recognition metadata and reference samples.' : 'Create a known person profile.'}</p>
+                </div>
+                {selected && (
+                  <div className="table-actions">
+                    <button type="button" onClick={() => setEditing((value) => !value)}>{editing ? 'Close edit' : 'Edit'}</button>
+                    <button type="button" className="danger" onClick={() => deleteIdentity(selected)}>Delete</button>
+                  </div>
+                )}
+              </div>
+
+              {(editing || !selected) && (
+                <form className="identity-form" onSubmit={saveIdentity}>
+                  <Field label="Display name">
+                    <input value={form.display_name} onChange={(event) => setForm({ ...form, display_name: event.target.value })} placeholder="Person A" required />
+                  </Field>
+                  <Field label="Identity type">
+                    <select value={form.known ? 'known' : 'unknown'} onChange={(event) => setForm({ ...form, known: event.target.value === 'known' })}>
+                      <option value="known">Known person</option>
+                      <option value="unknown">Unknown/watch identity</option>
+                    </select>
+                  </Field>
+                  <Field label="Notes" className="identity-notes-field">
+                    <textarea rows="4" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="Relationship, context, or reminders for future recognition review." />
+                  </Field>
+                  <div className="form-actions notification-form-actions">
+                    {selected && <button type="button" className="secondary" onClick={() => loadIdentity(selected.id)}>Cancel</button>}
+                    <button>{selected ? 'Save identity' : 'Create identity'}</button>
+                  </div>
+                </form>
+              )}
+
+              {selected && (
+                <>
+                  <div className="identity-meta-grid">
+                    <div><span>Status</span><strong>{selected.known ? 'Known person' : 'Unknown/watch identity'}</strong></div>
+                    <div><span>Reference images</span><strong>{referenceImages.length}</strong></div>
+                    <div><span>Last seen</span><strong>{selected.last_seen_at ? formatDateTime(selected.last_seen_at) : 'Not observed yet'}</strong></div>
+                  </div>
+
+                  <section className="identity-settings-placeholder">
+                    <div>
+                      <strong>Recognition settings</strong>
+                      <p>Placeholders for the future recognition engine. These controls are not active yet.</p>
+                    </div>
+                    <Field label="Face match threshold">
+                      <input value="0.72" disabled readOnly />
+                    </Field>
+                    <label className="switch-row disabled">
+                      <input type="checkbox" disabled />
+                      <span><strong>Enable notifications for this identity</strong><small>Notification rules will consume observations in a later phase.</small></span>
+                    </label>
+                  </section>
+
+                  <section className="reference-section">
+                    <div className="identity-detail-header">
+                      <div>
+                        <h3>Reference images</h3>
+                        <p>Upload multiple clear samples from different angles or lighting. Embeddings are intentionally left empty until AI inference is added.</p>
+                      </div>
+                    </div>
+                    <form className="reference-upload" onSubmit={uploadReferenceImage}>
+                      <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" />
+                      <button disabled={uploading}>{uploading ? 'Uploading...' : 'Add reference image'}</button>
+                    </form>
+                    <div className="reference-grid">
+                      {referenceImages.map((image) => (
+                        <article className="reference-card" key={image.id}>
+                          <img src={`${apiBaseUrl}${image.image_url}`} alt={`${selected.display_name} reference`} />
+                          <div>
+                            <StatusBadge kind="ok" text={image.status || 'active'} />
+                            <button type="button" className="danger" onClick={() => deleteReferenceImage(image)}>Delete</button>
+                          </div>
+                          <small>Added {formatDateTime(image.created_at)}</small>
+                        </article>
+                      ))}
+                    </div>
+                    {!referenceImages.length && <EmptyState title="No reference images" body="Add a few good sample images so future recognition has useful material." />}
+                  </section>
+                </>
+              )}
+            </>
+          ) : (
+            <EmptyState title="Select or add an identity" body="Known people will appear here with their future recognition samples." />
+          )}
+        </section>
+      </div>
+    </Panel>
   );
 }
 
