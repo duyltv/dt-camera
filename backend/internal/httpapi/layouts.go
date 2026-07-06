@@ -78,10 +78,11 @@ type layoutItemRequest struct {
 func (s *Server) handleLayouts(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		if _, ok := s.requireUser(w, r); !ok {
+		user, ok := s.requireUser(w, r)
+		if !ok {
 			return
 		}
-		s.listLayouts(w, r)
+		s.listLayouts(w, r, user)
 	case http.MethodPost:
 		if _, ok := s.requireAdmin(w, r); !ok {
 			return
@@ -239,7 +240,15 @@ func (s *Server) createLayout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, layout)
 }
 
-func (s *Server) listLayouts(w http.ResponseWriter, r *http.Request) {
+func (s *Server) listLayouts(w http.ResponseWriter, r *http.Request, user userResponse) {
+	permissionScope := strings.TrimSpace(r.URL.Query().Get("permission"))
+	if permissionScope == "" {
+		permissionScope = "any"
+	}
+	if permissionScope != "any" && permissionScope != "live" && permissionScope != "playback" {
+		writeError(w, http.StatusBadRequest, "validation_error", "permission must be any, live, or playback", nil)
+		return
+	}
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, name, settings, is_default, created_at, updated_at
 		FROM layouts
@@ -264,6 +273,9 @@ func (s *Server) listLayouts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		layout.Items = items
+		if !s.userCanAccessLayout(r, user, items, permissionScope) {
+			continue
+		}
 		layouts = append(layouts, layout)
 	}
 	if err := rows.Err(); err != nil {
@@ -271,6 +283,32 @@ func (s *Server) listLayouts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"layouts": layouts})
+}
+
+func (s *Server) userCanAccessLayout(r *http.Request, user userResponse, items []layoutItemResponse, permissionScope string) bool {
+	if user.Role == "admin" {
+		return true
+	}
+	for _, item := range items {
+		if item.CameraID == "" {
+			continue
+		}
+		switch permissionScope {
+		case "live":
+			if s.canViewLive(r, user, item.CameraID) {
+				return true
+			}
+		case "playback":
+			if s.canViewPlayback(r, user, item.CameraID) {
+				return true
+			}
+		default:
+			if s.canViewLive(r, user, item.CameraID) || s.canViewPlayback(r, user, item.CameraID) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Server) getLayout(w http.ResponseWriter, r *http.Request, id string) {

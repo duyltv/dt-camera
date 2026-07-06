@@ -2379,7 +2379,7 @@ function LiveLayoutPage() {
   const { loading, error, run } = useLoader(load);
 
   async function load() {
-    const data = await api('/api/layouts');
+    const data = await api('/api/layouts?permission=live');
     const list = data.layouts || [];
     setLayouts(list);
     if (!layoutId && list.length) {
@@ -2435,7 +2435,7 @@ function LiveLayoutPage() {
       </Toolbar>
       <State loading={loading} error={error} />
       {actionError && <ErrorText message={actionError} />}
-      {!layouts.length && !loading && <EmptyState title="No layouts" body="Create a layout to start streaming live video." />}
+      {!layouts.length && !loading && <EmptyState title="No accessible live layouts" body={user?.role === 'admin' ? 'Create a layout to start streaming live video.' : 'No layout contains a camera you can view live yet.'} />}
       {result && layout && (
         <div className={user?.role === 'admin' && !isMobileLayout ? 'live-layout-wrap' : undefined}>
           <LiveLayoutGrid
@@ -2471,7 +2471,7 @@ function PlaybackPage() {
   const { loading, error, run } = useLoader(load);
 
   async function load() {
-    const data = await api('/api/layouts');
+    const data = await api('/api/layouts?permission=playback');
     const list = data.layouts || [];
     setLayouts(list);
     if (!layoutId && list.length) setLayoutId(preferredLayout(list)?.id || list[0].id);
@@ -2566,7 +2566,7 @@ function PlaybackPage() {
       </div>
       <State loading={loading} error={error} />
       {actionError && <ErrorText message={actionError} />}
-      {!layouts.length && !loading && <EmptyState title="No layouts" body="Create a layout to start playing recorded footage." />}
+      {!layouts.length && !loading && <EmptyState title="No accessible playback layouts" body="No layout contains a camera you can view playback for yet." />}
       {layout && (
         <PlaybackTimeline
           layout={layout}
