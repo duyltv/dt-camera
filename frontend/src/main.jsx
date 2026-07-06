@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BrowserRouter,
   Link,
@@ -204,6 +204,19 @@ function Shell() {
           <button onClick={logout}>Logout</button>
         </header>
         <Outlet />
+        <footer className="app-footer">
+          <span className="footer-brand">DT-Camera™</span>
+          <span className="footer-divider">© 2026</span>
+          <a href="https://dt-camera.dtroute.com" target="_blank" rel="noreferrer" aria-label="DT Camera by DTRoute">
+            <span aria-hidden="true">↗</span>
+            DTRoute
+          </a>
+          <span className="footer-divider">·</span>
+          <a href="https://github.com/duyltv/dt-camera" target="_blank" rel="noreferrer" aria-label="DT Camera GitHub repository">
+            <span aria-hidden="true">⌘</span>
+            duyltv/dt-camera
+          </a>
+        </footer>
       </main>
     </div>
   );
@@ -2596,6 +2609,7 @@ function PlaybackPage() {
 function PlaybackTimeline({ layout, cameras, timeline, selectedTime, resultLoaded, onSelect }) {
   const [dayStart, dayEnd] = dayBounds(selectedTime);
   const [visibleWindow, setVisibleWindow] = useState(() => timelineWindowForSelectedTime(selectedTime));
+  const pinchRef = useRef(null);
   const start = visibleWindow.start;
   const end = visibleWindow.end;
   const duration = end.getTime() - start.getTime();
@@ -2630,6 +2644,34 @@ function PlaybackTimeline({ layout, cameras, timeline, selectedTime, resultLoade
     setVisibleWindow((current) => zoomTimelineWindow(current, dayStart, dayEnd, anchorTime, anchorRatio, zoomFactor));
   }
 
+  function startPinchZoom(event) {
+    if (event.touches.length !== 2) return;
+    const state = pinchStateFromTouches(event.touches, event.currentTarget.getBoundingClientRect(), start, duration);
+    if (!state) return;
+    event.preventDefault();
+    pinchRef.current = { ...state, window: visibleWindow };
+  }
+
+  function movePinchZoom(event) {
+    if (event.touches.length !== 2 || !pinchRef.current) return;
+    const state = pinchStateFromTouches(event.touches, event.currentTarget.getBoundingClientRect(), start, duration);
+    if (!state) return;
+    event.preventDefault();
+    const zoomFactor = zoomFactorFromPinchDistance(pinchRef.current.distance, state.distance);
+    setVisibleWindow(zoomTimelineWindow(
+      pinchRef.current.window,
+      dayStart,
+      dayEnd,
+      pinchRef.current.anchorTime,
+      pinchRef.current.anchorRatio,
+      zoomFactor,
+    ));
+  }
+
+  function endPinchZoom() {
+    pinchRef.current = null;
+  }
+
   function resetZoom() {
     setVisibleWindow({ start: dayStart, end: dayEnd });
   }
@@ -2638,11 +2680,18 @@ function PlaybackTimeline({ layout, cameras, timeline, selectedTime, resultLoade
     <section className="timeline-panel">
       <div className="timeline-header">
         <div>
-          <strong>Recording timeline</strong>
+          <div className="timeline-title-row">
+            <strong>Recording timeline</strong>
+            <div className="timeline-legend" aria-label="Timeline legend">
+              <span><i className="timeline-legend-recorded" />Recorded</span>
+              <span><i className="timeline-legend-event" />Motion</span>
+              <span><i className="timeline-legend-playhead" />Selected</span>
+            </div>
+          </div>
           <span>{formatDateTime(selectedTime)} · visible {formatTime(start)} - {formatTime(end)} ({formatTimelineDuration(duration)})</span>
         </div>
         <div className="timeline-actions">
-          <span>{hasRanges ? 'Recorded ranges are highlighted' : 'No stored video on this day'}</span>
+          <span>{hasRanges ? 'Scroll over the bar to zoom around the pointer' : 'No stored video on this day'}</span>
           <button type="button" onClick={resetZoom}>Reset zoom</button>
         </div>
       </div>
@@ -2661,8 +2710,12 @@ function PlaybackTimeline({ layout, cameras, timeline, selectedTime, resultLoade
                 type="button"
                 onClick={selectFromEvent}
                 onWheel={zoomFromWheel}
+                onTouchStart={startPinchZoom}
+                onTouchMove={movePinchZoom}
+                onTouchEnd={endPinchZoom}
+                onTouchCancel={endPinchZoom}
                 aria-label={`Select playback time for ${cameraNames.get(cameraID) || cameraID}`}
-                title="Click to select time. Use mouse wheel over the bar to zoom around the pointer."
+                title="Click to select time. Use mouse wheel or two-finger pinch over the bar to zoom around the pointer."
               >
                 {(row.ranges || []).map((range, index) => (
                   <span
@@ -2827,10 +2880,21 @@ function PlaybackLayoutGrid({ layout, cameras, playing, videoRefs, focusedCamera
 }
 
 function PlaybackFullscreenControls({ cameraID, playing, selectedTime, timeline, onSelectTime, onTogglePlayback }) {
-  const [start, end] = dayBounds(selectedTime);
+  const [visibleWindow, setVisibleWindow] = useState(() => timelineWindowForSelectedTime(selectedTime));
+  const pinchRef = useRef(null);
+  const [dayStart, dayEnd] = dayBounds(selectedTime);
+  const start = visibleWindow.start;
+  const end = visibleWindow.end;
   const duration = end.getTime() - start.getTime();
   const playheadLeft = pct((selectedTime.getTime() - start.getTime()) / duration);
   const availability = (timeline?.camera_availability || []).find((item) => item.camera_id === cameraID);
+
+  useEffect(() => {
+    setVisibleWindow((current) => {
+      if (selectedTime >= current.start && selectedTime <= current.end) return current;
+      return timelineWindowForSelectedTime(selectedTime);
+    });
+  }, [selectedTime]);
 
   function selectFromEvent(event) {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -2838,12 +2902,67 @@ function PlaybackFullscreenControls({ cameraID, playing, selectedTime, timeline,
     onSelectTime(new Date(start.getTime() + ratio * duration));
   }
 
+  function zoomFromWheel(event) {
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const anchorRatio = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1);
+    const anchorTime = new Date(start.getTime() + anchorRatio * duration);
+    const zoomFactor = event.deltaY < 0 ? 0.72 : 1.35;
+    setVisibleWindow((current) => zoomTimelineWindow(current, dayStart, dayEnd, anchorTime, anchorRatio, zoomFactor));
+  }
+
+  function startPinchZoom(event) {
+    if (event.touches.length !== 2) return;
+    const state = pinchStateFromTouches(event.touches, event.currentTarget.getBoundingClientRect(), start, duration);
+    if (!state) return;
+    event.preventDefault();
+    pinchRef.current = { ...state, window: visibleWindow };
+  }
+
+  function movePinchZoom(event) {
+    if (event.touches.length !== 2 || !pinchRef.current) return;
+    const state = pinchStateFromTouches(event.touches, event.currentTarget.getBoundingClientRect(), start, duration);
+    if (!state) return;
+    event.preventDefault();
+    const zoomFactor = zoomFactorFromPinchDistance(pinchRef.current.distance, state.distance);
+    setVisibleWindow(zoomTimelineWindow(
+      pinchRef.current.window,
+      dayStart,
+      dayEnd,
+      pinchRef.current.anchorTime,
+      pinchRef.current.anchorRatio,
+      zoomFactor,
+    ));
+  }
+
+  function endPinchZoom() {
+    pinchRef.current = null;
+  }
+
+  function resetZoom() {
+    setVisibleWindow(timelineWindowForSelectedTime(selectedTime));
+  }
+
   return (
     <div className="playback-fullscreen-controls">
       <button type="button" onClick={onTogglePlayback}>{playing ? 'Pause' : 'Play'}</button>
       <div className="fullscreen-timeline-wrap">
-        <span>{formatTimeOnly(start)}</span>
-        <button className="fullscreen-timeline-track" type="button" onClick={selectFromEvent} aria-label="Select playback time">
+        <div className="fullscreen-timeline-meta">
+          <strong>{formatTimeOnly(selectedTime)}</strong>
+          <span>{formatTime(start)} - {formatTime(end)}</span>
+        </div>
+        <button
+          className="fullscreen-timeline-track"
+          type="button"
+          onClick={selectFromEvent}
+          onWheel={zoomFromWheel}
+          onTouchStart={startPinchZoom}
+          onTouchMove={movePinchZoom}
+          onTouchEnd={endPinchZoom}
+          onTouchCancel={endPinchZoom}
+          aria-label="Select playback time"
+          title="Click to select time. Use mouse wheel or two-finger pinch over the bar to zoom around the pointer."
+        >
           {(availability?.ranges || []).map((range, index) => (
             <span
               className="timeline-range"
@@ -2860,7 +2979,7 @@ function PlaybackFullscreenControls({ cameraID, playing, selectedTime, timeline,
           ))}
           <span className="timeline-playhead" style={{ left: `${playheadLeft}%` }} />
         </button>
-        <span>{formatTimeOnly(selectedTime)}</span>
+        <button className="fullscreen-reset-zoom" type="button" onClick={resetZoom}>Reset</button>
       </div>
     </div>
   );
@@ -2929,6 +3048,26 @@ function zoomTimelineWindow(current, dayStart, dayEnd, anchorTime, anchorRatio, 
   }
 
   return { start: new Date(nextStart), end: new Date(nextEnd) };
+}
+
+function pinchStateFromTouches(touches, rect, start, duration) {
+  if (!touches || touches.length < 2 || !rect || rect.width <= 0) return null;
+  const first = touches[0];
+  const second = touches[1];
+  const distance = Math.max(Math.abs(second.clientX - first.clientX), 1);
+  const midpointX = (first.clientX + second.clientX) / 2;
+  const anchorRatio = Math.min(Math.max((midpointX - rect.left) / rect.width, 0), 1);
+  return {
+    anchorRatio,
+    anchorTime: new Date(start.getTime() + anchorRatio * duration),
+    distance,
+  };
+}
+
+function zoomFactorFromPinchDistance(startDistance, currentDistance) {
+  if (!startDistance || !currentDistance) return 1;
+  const ratio = Math.min(Math.max(currentDistance / startDistance, 0.35), 3);
+  return 1 / ratio;
 }
 
 function timelineScaleLabels(start, end) {
