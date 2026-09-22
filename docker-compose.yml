@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-dt_camera}
       POSTGRES_USER: ${POSTGRES_USER:-dt_camera}
@@ -16,6 +17,7 @@ services:
   backend:
     build:
       context: ./backend
+    restart: unless-stopped
     environment:
       APP_ADDR: :8080
       # APP_ENV: development|production|staging. Leave unset
@@ -71,6 +73,7 @@ services:
   recorder:
     build:
       context: ./recorder
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-dt_camera}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-dt_camera}?sslmode=disable
       RECORDINGS_PATH: ${RECORDINGS_CONTAINER_PATH:-/recordings}
@@ -91,6 +94,7 @@ services:
   analytics-worker:
     build:
       context: ./analytics
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-dt_camera}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-dt_camera}?sslmode=disable
       RECORDINGS_PATH: ${RECORDINGS_CONTAINER_PATH:-/recordings}
@@ -107,6 +111,7 @@ services:
   frontend:
     build:
       context: ./frontend
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:5173/"]
       interval: 30s
